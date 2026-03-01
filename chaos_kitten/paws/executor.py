@@ -234,7 +234,7 @@ class Executor:
                             headers=request_headers,
                         )
                 elif method == "DELETE":
-                    if payload:
+                    if payload is not None:
                         response = await self._client.request(
                             method,
                             path,
