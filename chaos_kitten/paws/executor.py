@@ -90,7 +90,7 @@ class Executor:
         self.log_file = log_file
 
         self._client: Optional[httpx.AsyncClient] = None
-        self._rate_limiter: Optional[asyncio.Semaphore] = None
+        self._rate_lock: Optional[asyncio.Lock] = None
         self._last_request_time: float = 0.0
         self.totp_secret = totp_secret
         self.totp_endpoint = totp_endpoint
@@ -109,8 +109,8 @@ class Executor:
         
         await self._perform_mfa_auth()
         
-        # Initialize rate limiter semaphore
-        self._rate_limiter = asyncio.Semaphore(max(1, self.rate_limit)) if self.rate_limit > 0 else None
+        # Initialize rate limiter lock
+        self._rate_lock = asyncio.Lock() if self.rate_limit > 0 else None
         return self
     
     async def __aexit__(self, *args: Any) -> None:
@@ -350,24 +350,28 @@ class Executor:
         await asyncio.sleep(backoff)
 
     async def _apply_rate_limit(self) -> None:
-        """Apply rate limiting using token bucket algorithm."""
-        if not self._rate_limiter:
+        """Enforce a minimum interval between requests (1 / rate_limit seconds).
+
+        Uses an asyncio.Lock to serialise the timing check so that
+        concurrent callers are properly spaced apart.  The lock is
+        released *after* the timestamp is updated but *before* the
+        actual HTTP request runs, which is the correct pattern for a
+        leaky-bucket rate limiter (as opposed to a concurrency limiter).
+        """
+        if not self._rate_lock:
             return
-        
-        # Acquire semaphore token
-        async with self._rate_limiter:
-            # Calculate time since last request
-            current_time = time.perf_counter()
-            time_since_last = current_time - self._last_request_time
-            
-            # Minimum time between requests (in seconds)
-            min_interval = 1.0 / self.rate_limit if self.rate_limit > 0 else 0
-            
-            # Sleep if we're going too fast
-            if time_since_last < min_interval:
-                await asyncio.sleep(min_interval - time_since_last)
-            
-            # Update last request time
+
+        min_interval = 1.0 / self.rate_limit if self.rate_limit > 0 else 0
+
+        async with self._rate_lock:
+            # Calculate how long to wait before this request may proceed
+            now = time.perf_counter()
+            elapsed = now - self._last_request_time
+            if elapsed < min_interval:
+                await asyncio.sleep(min_interval - elapsed)
+
+            # Stamp the time *before* releasing the lock so the next
+            # waiter uses the correct baseline.
             self._last_request_time = time.perf_counter()
 
     def _setup_logging(self) -> None:
