@@ -255,13 +255,16 @@ class ResponseAnalyzer:
         return None
 
     def _check_custom_indicators(self, response: dict, indicators: dict) -> Optional[Finding]:
-        """Check against success indicators defined in the attack profile."""
+        """Check against success indicators defined in the attack profile.
+        
+        Note: The `response_time_gt` indicator is expected to be in seconds.
+        """
         if not indicators:
             return None
             
         body = response.get("body", "")
         status_code = response.get("status_code")
-        elapsed_ms = response.get("elapsed_ms", 0) / 1000.0  # convert to seconds
+        elapsed_s = response.get("elapsed_ms", 0) / 1000.0  # convert to seconds
 
         # Check response_contains
         if "response_contains" in indicators:
@@ -288,10 +291,10 @@ class ResponseAnalyzer:
         # Check response_time_gt
         if "response_time_gt" in indicators:
             limit = indicators["response_time_gt"]
-            if elapsed_ms > limit:
+            if elapsed_s > limit:
                  return Finding(
                     vulnerability_type="",
-                    evidence=f"Response time {elapsed_ms:.2f}s > {limit}s",
+                    evidence=f"Response time {elapsed_s:.2f}s > {limit}s",
                     confidence=0.8
                 )
 
