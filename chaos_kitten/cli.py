@@ -442,39 +442,6 @@ def preflight():
         console.print("\n[bold green]✅ Environment is ready for basic scanning![/bold green]")
 
 
-    from chaos_kitten.brain.orchestrator import Orchestrator
-
-    orchestrator = Orchestrator(app_config)
-    try:
-        import asyncio
-        results = asyncio.run(orchestrator.run())
-
-        # Check for orchestrator runtime errors
-        if isinstance(results, dict) and results.get("status") == "failed":
-            console.print(f"[bold red]❌ Scan failed:[/bold red] {results.get('error')}")
-            raise typer.Exit(code=1)
-
-        # Handle --fail-on-critical (including pre-scan findings)
-        if fail_on_critical:
-            vulnerabilities = results.get("vulnerabilities", [])
-            critical_vulns = [
-                v for v in vulnerabilities 
-                if str(v.get("severity", "")).lower() == "critical"
-            ]
-            # Note: orchestrator already injected critical_findings into vulnerabilities, so no need to add again
-            total_critical = len(critical_vulns)
-            
-            if total_critical > 0:
-                console.print(f"[bold red]❌ Found {total_critical} critical issue(s). Failing pipeline.[/bold red]")
-                raise typer.Exit(code=1)
-
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[bold red]❌ Diff scan failed:[/bold red] {e}")
-        raise typer.Exit(code=1)
-
-
 @app.command()
 def interactive():
     """Start interactive mode."""
