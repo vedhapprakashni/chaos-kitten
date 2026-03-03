@@ -6,13 +6,11 @@ description: "Tests for insecure deserialization vulnerabilities in Java using c
 supported_languages:
   - "java"
 target_fields:
-  - "data"
-  - "state"
-  - "viewstate"
-  - "object"
-  - "serialized"
-  - "payload"
   - "javax.faces.ViewState"
+  - "viewstate"
+  - "serialized"
+  - "java_obj"
+  - "serialized_object"
 success_indicators:
   - "java.io.InvalidClassException"
   - "java.lang.Runtime"

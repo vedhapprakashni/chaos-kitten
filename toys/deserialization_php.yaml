@@ -6,12 +6,11 @@ description: "Tests for insecure deserialization vulnerabilities in PHP unserial
 supported_languages:
   - "php"
 target_fields:
-  - "data"
-  - "state"
-  - "object"
   - "serialized"
-  - "payload"
+  - "php_serial"
+  - "php_obj"
   - "php_sess_id"
+  - "phar"
 success_indicators:
   - "PHP Fatal error: Uncaught"
   - "Object of class"

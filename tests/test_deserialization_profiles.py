@@ -1,6 +1,7 @@
 import pytest
 import yaml
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 from chaos_kitten.brain.attack_planner import AttackPlanner
 
 @pytest.fixture
@@ -20,8 +21,9 @@ def planner(tmp_path):
         with open(d / f"p{i}.yaml", "w") as f:
             yaml.dump(prof, f)
             
-    p = AttackPlanner(endpoints=[], toys_path=str(d))
-    return p
+    with patch.object(AttackPlanner, "_init_llm", return_value=MagicMock()):
+        p = AttackPlanner(endpoints=[], toys_path=str(d))
+        return p
 
 def test_language_detection_headers(planner):
     endpoint = {

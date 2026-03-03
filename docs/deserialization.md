@@ -1,7 +1,7 @@
 # Advanced Deserialization Attack Profiles
 
 ## Overview
-Insecure deserialization occurs when untrusted data is used to abuse the logic of an application, inflict a denial of service (DoS) attack, or even execute arbitrary code upon it being deserialization.
+Insecure deserialization occurs when untrusted data is used to abuse the logic of an application, inflict a denial of service (DoS) attack, or even execute arbitrary code upon it being deserialized.
 
 Chaos Kitten provides advanced detection and exploitation profiles for insecure deserialization across multiple languages, including **Java**, **Python**, **PHP**, and **Ruby**.
 
@@ -47,5 +47,5 @@ Ruby can be vulnerable through `Marshal.load` and `YAML.load`.
   - YAML load unsafe objects: `--- !ruby/object:Gem::Installer\n  i: x\n`
   - Deep generic gadgets: `ActiveSupport::Deprecation::DeprecatedInstanceVariableProxy`
 
-## Adding Custom Gadgents
+## Adding Custom Gadgets
 To add more payloads, update the corresponding `toys/deserialization_<lang>.yaml` file. Each file has a `payloads` array where raw string payloads can be added. Ensure payloads are appropriately escaped if using multi-line strings.
