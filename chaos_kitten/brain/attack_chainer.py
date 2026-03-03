@@ -184,11 +184,10 @@ class ChainExecutor:
                 for var_name, var_value in variables.items():
                     path = path.replace(f"{{{var_name}}}", str(var_value))
                     
-                # Prepend base_url if path is relative
-                if base_url and path.startswith("/"):
-                    full_url = f"{base_url.rstrip('/')}{path}"
-                else:
-                    full_url = path
+                # Pass the relative path directly to the executor.
+                # The executor's httpx client is already configured with the
+                # base_url, so prepending it here would cause a double-prefix
+                # (e.g. http://example.com/http://example.com/api/users).
                     
                 # Prepare payload with injected variables
                 payload = {}
@@ -199,7 +198,7 @@ class ChainExecutor:
                         logger.warning(f"Missing variable '{var_name}' for step {i}, payload may be incomplete")
                         
                 # Execute attack
-                response = await self.executor.execute_attack(method, full_url, payload)
+                response = await self.executor.execute_attack(method, path, payload)
                 
                 # Check for execution error
                 if response.get("error"):
@@ -228,7 +227,7 @@ class ChainExecutor:
                     "step_index": i,
                     "status": "success",
                     "step": step,
-                    "request": {"method": method, "path": full_url, "payload": payload},
+                    "request": {"method": method, "path": path, "payload": payload},
                     "response": response
                 })
             except Exception as e:
