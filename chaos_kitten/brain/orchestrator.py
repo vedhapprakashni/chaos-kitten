@@ -22,6 +22,8 @@ except (ImportError, TypeError):
     START = None
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -177,6 +179,51 @@ async def plan_attacks(state: AgentState, app_config: Dict[str, Any]) -> Dict[st
         return {"planned_attacks": []}
 
 
+def _interactive_prompt(attack: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Prompt user for confirmation/modification of an attack."""
+    payload = attack.get("body") or attack.get("payload")
+    payload_str = json.dumps(payload, indent=2) if payload else "None"
+    
+    console.print(Panel(
+        f"[bold]Name:[/bold] {attack.get('name', 'Unnamed Attack')}\n"
+        f"[bold]Type:[/bold] {attack.get('type')}\n"
+        f"[bold]Method:[/bold] {attack.get('method')}\n"
+        f"[bold]Path:[/bold] {attack.get('path')}\n"
+        f"[bold]Payload:[/bold]\n{payload_str}",
+        title="[yellow]🛑 Execution Paused (Interactive Mode)[/yellow]",
+        border_style="yellow"
+    ))
+    
+    action = Prompt.ask(
+        "Action ([green]y[/green]es/[red]n[/red]o/[blue]m[/blue]odify)",
+        choices=["y", "n", "m"],
+        default="y"
+    )
+    
+    if action == "n":
+        console.print("[dim]Skipping attack...[/dim]")
+        return None
+        
+    if action == "m":
+        # Modify logic
+        console.print("[cyan]Enter new payload (JSON format):[/cyan]")
+        new_payload_str = Prompt.ask("", default=json.dumps(payload) if payload else "{}")
+        try:
+            new_payload = json.loads(new_payload_str)
+            attack_copy = attack.copy()
+            if attack_copy.get("body"):
+                attack_copy["body"] = new_payload
+            else:
+                 attack_copy["payload"] = new_payload
+            console.print("[green]Payload updated![/green]")
+            return attack_copy
+        except json.JSONDecodeError:
+            console.print("[red]Invalid JSON! Proceeding with original payload.[/red]")
+            return attack
+            
+    return attack
+
+
 async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict[str, Any]) -> Dict[str, Any]:
     """Execute planned attacks and analyze responses."""
     from chaos_kitten.paws.analyzer import ResponseAnalyzer
@@ -200,6 +247,12 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
 
     for attack in planned_attacks:
         try:
+            # Interactive Mode
+            if app_config.get("execution", {}).get("interactive", False):
+                attack = _interactive_prompt(attack)
+                if not attack:
+                    continue
+
             # Check for concurrency attack
             if attack.get("concurrency"):
                 concurrency_opts = attack.get("concurrency", {})

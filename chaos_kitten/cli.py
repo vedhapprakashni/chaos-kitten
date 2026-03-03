@@ -174,6 +174,12 @@ def scan(
         "--resume",
         help="Resume from last checkpoint",
     ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Run in interactive mode (human loop)",
+    ),
 ):
     """Scan an API for security vulnerabilities."""
     if not silent:
@@ -217,6 +223,9 @@ def scan(
         app_config.setdefault("reporting", {})["format"] = format
     if provider:
         app_config.setdefault("agent", {})["llm_provider"] = provider
+    if interactive:
+        # Override execution.interactive
+        app_config.setdefault("execution", {})["interactive"] = True
 
     app_config["silent"] = silent
 
