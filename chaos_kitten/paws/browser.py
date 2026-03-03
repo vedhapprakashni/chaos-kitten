@@ -238,6 +238,24 @@ class BrowserExecutor:
                     input_selector, state="visible", timeout=self.timeout / 2
                 )
             except Exception:
+                # If an alert already triggered (e.g. reflected XSS on
+                # page load that broke the DOM), report it as vulnerable
+                # instead of silently swallowing the finding.
+                if triggered_alert:
+                    logger.warning(
+                        f"XSS Vulnerability detected at {url} with payload {payload} "
+                        f"(selector '{input_selector}' not found, but alert fired)"
+                    )
+                    os.makedirs(screenshot_dir, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"xss_proven_{timestamp}.png"
+                    screenshot_path = os.path.join(screenshot_dir, filename)
+                    await page.screenshot(path=screenshot_path)
+                    return {
+                        "is_vulnerable": True,
+                        "screenshot_path": screenshot_path,
+                        "error": None,
+                    }
                 return {
                     "is_vulnerable": False,
                     "screenshot_path": None,
@@ -275,10 +293,10 @@ class BrowserExecutor:
 
         except PlaywrightError as e:
             logger.error(f"Playwright error during XSS test: {e}")
-            return {"is_vulnerable": False, "screenshot_path": None, "error": str(e)}
+            return {"is_vulnerable": triggered_alert, "screenshot_path": screenshot_path, "error": str(e)}
         except Exception as e:
             logger.error(f"Unexpected error during XSS test: {e}")
-            return {"is_vulnerable": False, "screenshot_path": None, "error": str(e)}
+            return {"is_vulnerable": triggered_alert, "screenshot_path": screenshot_path, "error": str(e)}
         finally:
             if page:
                 await page.close()
