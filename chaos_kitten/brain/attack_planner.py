@@ -32,6 +32,7 @@ class AttackProfile:
     workflow: list[dict[str, Any]] = field(default_factory=list)
     concurrency: dict[str, Any] = field(default_factory=dict)
     target_paths: list[str] = field(default_factory=list)
+    supported_languages: list[str] = field(default_factory=list)
 
 
 ATTACK_PLANNING_PROMPT = """You are a security expert analyzing an API endpoint for vulnerabilities.
@@ -175,6 +176,7 @@ class AttackPlanner:
                     workflow=workflow,
                     concurrency=concurrency,
                     target_paths=data.get("target_paths") or [],
+                    supported_languages=[str(lang).lower() for lang in (data.get("supported_languages", []) or [])],
                 )
                 self.attack_profiles.append(profile)
                 logger.debug("Loaded attack profile: %s", profile.name)
@@ -332,9 +334,15 @@ class AttackPlanner:
         method = endpoint.get("method", "GET")
         path = endpoint.get("path", "")
         fields = self._extract_endpoint_fields(endpoint)
+        detected_languages = self._detect_serialization_languages(endpoint)
 
         attacks: list[dict[str, Any]] = []
         for profile in self.attack_profiles:
+            # If the profile defines supported languages and the endpoint doesn't match, skip it
+            if profile.supported_languages:
+                if not detected_languages.intersection(profile.supported_languages):
+                    continue
+
             # Special handling for Business Logic / Workflow / Concurrency
             if profile.workflow or profile.concurrency:
                 # Check path match
@@ -469,6 +477,49 @@ class AttackPlanner:
 
         unique_attacks.sort(key=self._attack_sort_key)
         return unique_attacks
+
+    def _detect_serialization_languages(self, endpoint: dict[str, Any]) -> set[str]:
+        languages = set()
+        
+        # Check overall path for language extensions
+        path = str(endpoint.get("path", "")).lower()
+        if path.endswith(".php"):
+            languages.add("php")
+        elif path.endswith(".jsp") or path.endswith(".do") or path.endswith(".action"):
+            languages.add("java")
+        elif path.endswith(".py"):
+            languages.add("python")
+        elif path.endswith(".rb") or "rails" in path:
+            languages.add("ruby")
+
+        # Check Content-Type headers in requestBody
+        request_body = endpoint.get("requestBody") or {}
+        content = request_body.get("content", {})
+        for content_type, _ in content.items():
+            ct_lower = content_type.lower()
+            if "java-serialized" in ct_lower:
+                languages.add("java")
+            elif "python-pickle" in ct_lower or "x-python" in ct_lower:
+                languages.add("python")
+            elif "php-serialized" in ct_lower or "x-php" in ct_lower:
+                languages.add("php")
+            elif "ruby-marshal" in ct_lower or "x-ruby" in ct_lower:
+                languages.add("ruby")
+                
+        # Check specific parameter names indicating serialization
+        for param in endpoint.get("parameters", []):
+            if isinstance(param, dict):
+                name = str(param.get("name", "")).lower()
+                if "java" in name and ("obj" in name or "serial" in name):
+                    languages.add("java")
+                if "pickle" in name:
+                    languages.add("python")
+                if "php" in name and ("serial" in name or "obj" in name):
+                    languages.add("php")
+                if "marshal" in name:
+                    languages.add("ruby")
+                
+        return languages
 
     def _extract_endpoint_fields(self, endpoint: dict[str, Any]) -> list[tuple[str, str]]:
         fields: list[tuple[str, str]] = []
