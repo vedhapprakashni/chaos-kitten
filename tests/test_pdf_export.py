@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch, Mock
 import logging
 from chaos_kitten.litterbox import reporter
 
@@ -9,6 +9,7 @@ def mock_scan_results():
         "summary": {"total": 1, "critical": 1, "high": 0, "medium": 0, "low": 0},
         "vulnerabilities": [
             {
+                "title": "SQL Injection",
                 "type": "sqli",
                 "severity": "critical",
                 "url": "http://example.com/api/users",

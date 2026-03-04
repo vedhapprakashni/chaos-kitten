@@ -150,6 +150,9 @@ class Reporter:
 
             last_output_file = output_file
 
+        if last_output_file is None:
+            raise RuntimeError("No report was generated. Check that the requested format(s) are available.")
+
         return last_output_file
 
     def _get_extension(self, fmt: str = None) -> str:
@@ -395,7 +398,7 @@ class Reporter:
             logger.info(f"Generated PDF report: {output_path}")
         except Exception as e:
             logger.error(f"Failed to generate PDF report: {e}")
-            # Fallback or just log error? For now just log.
+            raise
 
 
     def _generate_html(self, results: Dict[str, Any], target: str) -> str:
@@ -549,23 +552,6 @@ class Reporter:
 
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid vulnerability data for JSON export: {e}") from e
-
-    
-    def _generate_sarif(self, results: Dict[str, Any], target: str) -> str:
-            """Generate SARIF report.
-
-            Args:
-                results: Vulnerability scan results
-                target: Target URL that was scanned
-
-            Returns:
-                Generated SARIF report content
-            """
-            try:
-                vulnerabilities = self._validate_vulnerability_data(results)
-                return self._generate_sarif_from_vulns(vulnerabilities, target)
-            except Exception as e:
-                raise ValueError(f"Failed to generate SARIF report: {e}") from e
 
     
     def _generate_sarif_from_vulns(self, vulnerabilities: List[Dict[str, Any]], target: str) -> str:
