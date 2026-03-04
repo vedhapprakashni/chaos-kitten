@@ -842,6 +842,7 @@ footer {
         animation: none;
         justify-content: center;
         flex-wrap: wrap;
+        width: 100%;
     }
 
     .feature-card {
