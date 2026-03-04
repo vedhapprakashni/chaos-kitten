@@ -50,6 +50,10 @@ class PostmanParser:
         if not self.collection_path.exists():
             raise FileNotFoundError(f"Collection file not found: {self.collection_path}")
         
+        # Reset variables and endpoints before parsing to avoid stale data
+        self._endpoints = []
+        self._variables = {}
+        
         try:
             with open(self.collection_path, 'r', encoding='utf-8') as f:
                 self.collection = json.load(f)
@@ -61,7 +65,7 @@ class PostmanParser:
         if 'variable' in self.collection:
             for item in self.collection['variable']:
                 if not item.get('disabled') and item.get('key'):
-                     self._variables[item['key']] = item.get('value', '')
+                    self._variables[item['key']] = item.get('value', '')
             
         if self.environment_path:
             if self.environment_path.exists():
@@ -143,6 +147,24 @@ class PostmanParser:
             resolved_url = self._resolve_variables(url_obj)
             parsed = urlparse(resolved_url)
             path = parsed.path
+            # Parse query params from string URL
+            if parsed.query:
+                for pair in parsed.query.split("&"):
+                    if "=" in pair:
+                        k, v = pair.split("=", 1)
+                        query_params.append({
+                            "name": k,
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "default": v}
+                        })
+                    else:
+                        query_params.append({
+                            "name": pair,
+                            "in": "query",
+                            "required": False,
+                            "schema": {"type": "string", "default": ""}
+                        })
         else:
             # Parse object URL
             raw_url = url_obj.get('raw', '')
@@ -153,9 +175,9 @@ class PostmanParser:
                 resolved_segments = [self._resolve_variables(seg) for seg in path_segments]
                 path = "/" + "/".join(resolved_segments)
             else:
-                 resolved_url = self._resolve_variables(raw_url)
-                 parsed = urlparse(resolved_url)
-                 path = parsed.path
+                resolved_url = self._resolve_variables(raw_url)
+                parsed = urlparse(resolved_url)
+                path = parsed.path
                  
             # Extract query params
             for q in url_obj.get('query', []):
@@ -169,7 +191,7 @@ class PostmanParser:
             
             # Extract path variables
             for v in url_obj.get('variable', []):
-                 if not v.get('disabled') and v.get('key'):
+                if not v.get('disabled') and v.get('key'):
                     variable_params.append({
                         "name": v['key'],
                         "in": "path",
@@ -179,6 +201,18 @@ class PostmanParser:
 
         # Postman often uses :param in path, convert to {param} for consistency with OpenAPI pattern
         path = re.sub(r':([a-zA-Z0-9_]+)', r'{\1}', path)
+
+        # Infer any new path params that weren't explicitly defined in variables
+        path_params = re.findall(r'\{([a-zA-Z0-9_]+)\}', path)
+        existing_params = {p['name'] for p in variable_params}
+        for param in path_params:
+            if param not in existing_params:
+                variable_params.append({
+                    "name": param,
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"}
+                })
 
         # Headers
         header_params = []
@@ -190,7 +224,7 @@ class PostmanParser:
                     header_params.append({
                         "name": h['key'],
                         "in": "header",
-                        "required": True,
+                        "required": False,
                         "schema": {"type": "string", "default": self._resolve_variables(h['value'])}
                     })
         
@@ -213,6 +247,7 @@ class PostmanParser:
                     # Try to parse example as schema if it's valid json
                     try:
                         json_data = json.loads(raw_data)
+                        raw_data = json_data # Use parsed JSON object for example
                         # We won't generate a full schema from example here, just pass it as example
                         # Or use basic type inference if needed. For now, empty schema.
                         schema = {"type": "object"} 
@@ -224,28 +259,28 @@ class PostmanParser:
                     "example": raw_data
                 }
             elif mode == 'urlencoded':
-                 data = request['body'].get('urlencoded', [])
-                 schema_props = {}
-                 for d in data:
-                     if not d.get('disabled'):
-                         schema_props[d['key']] = {"type": "string", "default": self._resolve_variables(d.get('value', ''))}
-                 content["application/x-www-form-urlencoded"] = {
-                     "schema": {"type": "object", "properties": schema_props}
-                 }
+                data = request['body'].get('urlencoded', [])
+                schema_props = {}
+                for d in data:
+                    if not d.get('disabled'):
+                        schema_props[d['key']] = {"type": "string", "default": self._resolve_variables(d.get('value', ''))}
+                content["application/x-www-form-urlencoded"] = {
+                    "schema": {"type": "object", "properties": schema_props}
+                }
             elif mode == 'formdata':
-                 data = request['body'].get('formdata', [])
-                 schema_props = {}
-                 for d in data:
-                     if not d.get('disabled'):
-                         param_type = d.get('type', 'text')
-                         schema_props[d['key']] = {
-                             "type": "string", 
-                             "format": "binary" if param_type == "file" else "default",
-                             "default": self._resolve_variables(d.get('value', '')) if param_type == 'text' else None
-                         }
-                 content["multipart/form-data"] = {
-                     "schema": {"type": "object", "properties": schema_props}
-                 }
+                data = request['body'].get('formdata', [])
+                schema_props = {}
+                for d in data:
+                    if not d.get('disabled'):
+                        param_type = d.get('type', 'text')
+                        schema_props[d['key']] = {
+                            "type": "string", 
+                            "format": "binary" if param_type == "file" else "default",
+                            "default": self._resolve_variables(d.get('value', '')) if param_type == 'text' else None
+                        }
+                content["multipart/form-data"] = {
+                    "schema": {"type": "object", "properties": schema_props}
+                }
 
             if content:
                 request_body = {
@@ -264,7 +299,7 @@ class PostmanParser:
 
         return {
             "path": self._resolve_variables(path),
-            "method": method,
+            "method": method.upper(),
             "summary": name,
             "description": request.get('description', ''),
             "parameters": parameters,
@@ -283,6 +318,9 @@ class PostmanParser:
         if not self._endpoints:
              try:
                 self.parse()
+             except (FileNotFoundError, json.JSONDecodeError):
+                 # Re-raise critical file/format errors
+                 raise
              except Exception as e:
                  logger.error(f"Error getting endpoints: {e}")
                  return []
