@@ -461,6 +461,45 @@ class Orchestrator:
                     existing_findings.extend(chaos_findings)
                     final_state["findings"] = existing_findings
 
+                # ── State Machine Testing Phase ──────────────────
+                state_cfg = self.config.get("state_machine", {})
+                if state_cfg.get("enabled", False):
+                    try:
+                        from chaos_kitten.brain.state_machine import StateMachineAgent
+
+                        console.print("[bold blue]🔗 Running State Machine Tests...[/bold blue]")
+
+                        # Build endpoint list from spec
+                        sm_endpoints = []
+                        spec = final_state.get("openapi_spec") or {}
+                        for path, methods in spec.get("paths", {}).items():
+                            for method, details in methods.items():
+                                if method.upper() in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                                    sm_endpoints.append({
+                                        "method": method.upper(),
+                                        "path": path,
+                                        "parameters": details.get("parameters", []),
+                                        "requestBody": details.get("requestBody"),
+                                    })
+
+                        agent = StateMachineAgent(
+                            base_url=target_cfg.get("base_url", ""),
+                            executor=executor,
+                            auth_token_b=state_cfg.get("auth_token_b"),
+                        )
+                        sm_findings = await agent.analyse(sm_endpoints)
+
+                        if sm_findings:
+                            existing = list(final_state.get("findings", []))
+                            existing.extend(sm_findings)
+                            final_state["findings"] = existing
+                            console.print(
+                                f"[red]🔗 State Machine found {len(sm_findings)} "
+                                f"business-logic issue(s).[/red]"
+                            )
+                    except Exception as sm_err:
+                        logger.warning("State machine tests failed: %s", sm_err)
+
                 # Save checkpoint (implied success if we got here)
                 save_checkpoint(CheckpointData(
                     target_url=self.config.get("target", {}).get("base_url", ""),
