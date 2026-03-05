@@ -1,19 +1,19 @@
 """OpenAPI Spec Differ for detecting API changes between versions."""
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Optional, Dict, List
 
 
 @dataclass
 class EndpointChange:
-    """Represents a change to an endpoint."""
+    """Represents a change to a specific API endpoint."""
 
-    change_type: str  # 'added', 'removed', 'modified'
+    change_type: str  # "added", "removed", "modified"
     method: str
     path: str
-    old_endpoint: dict[str, Any] | None = None
-    new_endpoint: dict[str, Any] | None = None
-    modifications: list[str] | None = None
+    old_endpoint: Optional[Dict[str, Any]] = None
+    new_endpoint: Optional[Dict[str, Any]] = None
+    modifications: Optional[List[str]] = None
     severity: str = "info"  # 'critical', 'high', 'medium', 'info'
     reason: str = ""
 
@@ -21,7 +21,7 @@ class EndpointChange:
 class SpecDiffer:
     """Computes structural diff between two OpenAPI specifications."""
 
-    def __init__(self, old_spec: dict[str, Any], new_spec: dict[str, Any]):
+    def __init__(self, old_spec: Dict[str, Any], new_spec: Dict[str, Any]):
         """Initialize the spec differ.
 
         Args:
@@ -30,9 +30,9 @@ class SpecDiffer:
         """
         self.old_spec = old_spec
         self.new_spec = new_spec
-        self.changes: list[EndpointChange] = []
+        self.changes: List[EndpointChange] = []
 
-    def compute_diff(self) -> dict[str, Any]:
+    def compute_diff(self) -> Dict[str, Any]:
         """Compute structural diff between specs.
 
         Returns:
@@ -93,7 +93,7 @@ class SpecDiffer:
                 reason = "Endpoint modified"
 
                 for mod in modifications:
-                    if "authentication removed" in mod.lower() or "security requirement removed" in mod.lower():
+                    if "authentication requirement removed" in mod.lower() or "security requirement removed" in mod.lower():
                         current_rank = max(current_rank, _SEVERITY_RANK["critical"])
                         reason = "Authentication requirement removed — potential security regression"
                         break
@@ -123,7 +123,7 @@ class SpecDiffer:
                 if severity == "critical":
                     critical_findings.append(change)
 
-        unchanged_count = len(old_keys & new_keys) - len(modified)
+        unchanged_count = len(old_keys.keys() & new_keys.keys()) - len(modified)
 
         return {
             "added": added,
@@ -142,7 +142,7 @@ class SpecDiffer:
             }
         }
 
-    def _extract_endpoints(self, spec: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_endpoints(self, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract all endpoints from an OpenAPI spec.
 
         Args:
@@ -181,7 +181,7 @@ class SpecDiffer:
 
         return endpoints
 
-    def _detect_modifications(self, old_ep: dict[str, Any], new_ep: dict[str, Any]) -> list[str]:
+    def _detect_modifications(self, old_ep: Dict[str, Any], new_ep: Dict[str, Any]) -> List[str]:
         """Detect what changed between two endpoint versions.
 
         Args:
@@ -247,7 +247,7 @@ class SpecDiffer:
 
         return modifications
 
-    def _normalize_parameters(self, params: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    def _normalize_parameters(self, params: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """Normalize parameter list to dict keyed by (name, in).
 
         Args:
@@ -268,7 +268,7 @@ class SpecDiffer:
             }
         return normalized
 
-    def get_delta_endpoints(self) -> list[dict[str, Any]]:
+    def get_delta_endpoints(self) -> List[Dict[str, Any]]:
         """Get list of endpoints that need testing (added + modified).
 
         Returns:

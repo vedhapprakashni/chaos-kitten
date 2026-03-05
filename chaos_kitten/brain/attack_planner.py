@@ -8,7 +8,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import yaml
 # Moving langchain imports to local scope to prevent crashes during pre-flight checks
@@ -24,15 +24,15 @@ class AttackProfile:
     category: str
     severity: str
     description: str
-    payloads: list[str]
-    target_fields: list[str]
-    success_indicators: dict[str, Any]
+    payloads: List[str]
+    target_fields: List[str]
+    success_indicators: Dict[str, Any]
     remediation: str = ""
-    references: list[str] = field(default_factory=list)
-    workflow: list[dict[str, Any]] = field(default_factory=list)
-    concurrency: dict[str, Any] = field(default_factory=dict)
-    target_paths: list[str] = field(default_factory=list)
-    supported_languages: list[str] = field(default_factory=list)
+    references: List[str] = field(default_factory=list)
+    workflow: List[Dict[str, Any]] = field(default_factory=list)
+    concurrency: Dict[str, Any] = field(default_factory=dict)
+    target_paths: List[str] = field(default_factory=list)
+    supported_languages: List[str] = field(default_factory=list)
 
 
 ATTACK_PLANNING_PROMPT = """You are a security expert analyzing an API endpoint for vulnerabilities.
@@ -74,15 +74,15 @@ class AttackPlanner:
 
     def __init__(
         self,
-        endpoints: list[dict[str, Any]],
+        endpoints: List[Dict[str, Any]],
         toys_path: str = "toys/",
         llm_provider: str = "anthropic",
         temperature: float = 0.7,
     ) -> None:
         self.endpoints = endpoints
         self.toys_path = toys_path
-        self.attack_profiles: list[AttackProfile] = []
-        self._cache: dict[str, list[dict[str, Any]]] = {}
+        self.attack_profiles: List[AttackProfile] = []
+        self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self.llm_provider = llm_provider.lower()
         self.temperature = temperature
         self.llm = self._init_llm()
@@ -187,7 +187,7 @@ class AttackPlanner:
 
         logger.info("Loaded %d attack profiles", len(self.attack_profiles))
 
-    def plan_attacks(self, endpoint: dict[str, Any], allowed_profiles: list[str] | None = None) -> list[dict[str, Any]]:
+    def plan_attacks(self, endpoint: Dict[str, Any], allowed_profiles: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Plan attacks for a specific endpoint.
         
         Args:
@@ -210,7 +210,7 @@ class AttackPlanner:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        attacks: list[dict[str, Any]] = []
+        attacks: List[Dict[str, Any]] = []
         try:
             from langchain_core.prompts import ChatPromptTemplate
             from langchain_core.output_parsers import JsonOutputParser
@@ -256,11 +256,11 @@ class AttackPlanner:
         return attacks
 
     def _normalize_llm_attacks(
-        self, generated_attacks: list[dict[str, Any]], endpoint: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+        self, generated_attacks: List[Dict[str, Any]], endpoint: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         method = endpoint.get("method", "GET")
         path = endpoint.get("path", "")
-        normalized: list[dict[str, Any]] = []
+        normalized: List[Dict[str, Any]] = []
 
         for raw_attack in generated_attacks:
             if not isinstance(raw_attack, dict):
@@ -282,7 +282,7 @@ class AttackPlanner:
             elif isinstance(payload, str):
                 payload = {target_param: payload}
 
-            payload_values: list[str]
+            payload_values: List[str]
             raw_payloads = raw_attack.get("payloads")
             if isinstance(raw_payloads, list) and raw_payloads:
                 payload_values = [str(item) for item in raw_payloads]
@@ -330,13 +330,13 @@ class AttackPlanner:
         normalized.sort(key=self._attack_sort_key)
         return normalized
 
-    def _plan_rule_based(self, endpoint: dict[str, Any]) -> list[dict[str, Any]]:
+    def _plan_rule_based(self, endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
         method = endpoint.get("method", "GET")
         path = endpoint.get("path", "")
         fields = self._extract_endpoint_fields(endpoint)
         detected_languages = self._detect_serialization_languages(endpoint)
 
-        attacks: list[dict[str, Any]] = []
+        attacks: List[Dict[str, Any]] = []
         for profile in self.attack_profiles:
             # If the profile defines supported languages and the endpoint doesn't match, skip it
             if profile.supported_languages:
@@ -462,8 +462,8 @@ class AttackPlanner:
                 }
             )
 
-        unique_attacks: list[dict[str, Any]] = []
-        seen: set[tuple[str, str, str]] = set()
+        unique_attacks: List[Dict[str, Any]] = []
+        seen: set[Tuple[str, str, str]] = set()
         for attack in attacks:
             key = (
                 str(attack.get("profile_name", "")),
@@ -478,7 +478,7 @@ class AttackPlanner:
         unique_attacks.sort(key=self._attack_sort_key)
         return unique_attacks
 
-    def _detect_serialization_languages(self, endpoint: dict[str, Any]) -> set[str]:
+    def _detect_serialization_languages(self, endpoint: Dict[str, Any]) -> Set[str]:
         languages = set()
         
         # Check overall path for language extensions
@@ -521,8 +521,8 @@ class AttackPlanner:
                 
         return languages
 
-    def _extract_endpoint_fields(self, endpoint: dict[str, Any]) -> list[tuple[str, str]]:
-        fields: list[tuple[str, str]] = []
+    def _extract_endpoint_fields(self, endpoint: Dict[str, Any]) -> List[Tuple[str, str]]:
+        fields: List[Tuple[str, str]] = []
 
         for param in endpoint.get("parameters", []):
             if not isinstance(param, dict):
@@ -546,8 +546,8 @@ class AttackPlanner:
         if not fields:
             fields.append(("q", "query"))
 
-        deduped: list[tuple[str, str]] = []
-        seen_fields: set[tuple[str, str]] = set()
+        deduped: List[Tuple[str, str]] = []
+        seen_fields: set[Tuple[str, str]] = set()
         for field_name, location in fields:
             key = (field_name, location)
             if key not in seen_fields:
@@ -589,12 +589,12 @@ class AttackPlanner:
         normalized = re.sub(r"_+", "_", normalized).strip("_")
         return normalized
 
-    def _build_payload(self, field_name: str, location: str, payload: str) -> dict[str, Any]:
+    def _build_payload(self, field_name: str, location: str, payload: str) -> Dict[str, Any]:
         # Executor handles GET payload as query params and POST/PUT/PATCH payload as JSON.
         # Keeping a dict shape across locations is the most compatible contract here.
         return {field_name: payload}
 
-    def _expected_status(self, indicators: dict[str, Any]) -> int:
+    def _expected_status(self, indicators: Dict[str, Any]) -> int:
         status_codes = indicators.get("status_codes") if isinstance(indicators, dict) else None
         if isinstance(status_codes, list):
             for status_code in status_codes:
@@ -608,7 +608,7 @@ class AttackPlanner:
         order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
         return order.get(str(severity).lower(), 4)
 
-    def _attack_sort_key(self, attack: dict[str, Any]) -> tuple[int, str]:
+    def _attack_sort_key(self, attack: Dict[str, Any]) -> Tuple[int, str]:
         severity = str(
             attack.get("severity")
             or self._priority_to_severity(str(attack.get("priority", "medium")))
@@ -637,7 +637,7 @@ class AttackPlanner:
             return str(only_value)
         return str(payload)
 
-    def suggest_payloads(self, attack_type: str, context: dict[str, Any]) -> list[str]:
+    def suggest_payloads(self, attack_type: str, context: Dict[str, Any]) -> List[str]:
         """Generate context-specific payloads using LLM intelligence."""
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import JsonOutputParser
@@ -721,7 +721,7 @@ Remember: respond only with valid JSON matching the schema above. Do not include
 class NaturalLanguagePlanner:
     """Plans attacks based on natural language goals."""
 
-    def __init__(self, endpoints: list[dict[str, Any]], config: dict[str, Any]):
+    def __init__(self, endpoints: List[Dict[str, Any]], config: Dict[str, Any]):
         """Initialize the NL planner.
 
         Args:
@@ -760,7 +760,7 @@ class NaturalLanguagePlanner:
             from langchain_anthropic import ChatAnthropic
             return ChatAnthropic(model=model, temperature=temperature)
 
-    def plan(self, goal: str) -> dict[str, Any]:
+    def plan(self, goal: str) -> Dict[str, Any]:
         """Plan attacks based on natural language goal.
 
         Args:
@@ -849,7 +849,7 @@ class NaturalLanguagePlanner:
                 "reasoning": "Fallback: LLM planning failed"
             }
 
-    def _load_available_profiles(self) -> list[str]:
+    def _load_available_profiles(self) -> List[str]:
         """Load list of available attack profile names."""
         try:
             import os as _os

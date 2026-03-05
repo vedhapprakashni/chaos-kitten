@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from chaos_kitten.paws.executor import Executor
 
+from scipy import stats
+
 logger = logging.getLogger(__name__)
 
 
@@ -549,6 +551,34 @@ class AnomalyDetector:
             severity="critical",
         )
 
+    def detect_timing_leak(self, times_a: List[float], times_b: List[float]) -> Tuple[bool, float, str]:
+        """Detect a timing leak using Welch's t-test.
+        
+        Args:
+            times_a: List of response times for input A.
+            times_b: List of response times for input B.
+            
+        Returns:
+            Tuple of (leak_detected, p_value, message).
+        """
+        # SciPy is a required dependency as per pyproject.toml
+            
+        if len(times_a) < 2 or len(times_b) < 2:
+            return False, 1.0, "Insufficient data points for t-test"
+            
+        t_stat, p_val = stats.ttest_ind(times_a, times_b, equal_var=False)
+        
+        # Determine if there's a significant difference (p < 0.01)
+        if p_val < 0.01:
+            mean_a = sum(times_a) / len(times_a)
+            mean_b = sum(times_b) / len(times_b)
+            msg = "Timing Leak Detected (p < 0.01). Mean A: {:.4f}s, Mean B: {:.4f}s".format(
+                mean_a, mean_b
+            )
+            return True, float(p_val), msg
+            
+        return False, float(p_val), "No significant timing leak detected"
+
 
 class ChaosEngine:
     """Main chaos testing engine that coordinates generators and detectors.
@@ -928,6 +958,119 @@ class ChaosEngine:
 
         # Most requests get a normal 400 (expected for invalid input)
         return None
+
+    async def run_timing_tests(
+        self,
+        target_url: str,
+        endpoints: Optional[List[Dict[str, Any]]] = None,
+        executor: Optional["Executor"] = None,
+        iterations: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Run timing side-channel tests against target endpoints.
+        
+        Args:
+            target_url: Base URL of the target.
+            endpoints: List of endpoint definitions.
+            executor: Optional Executor instance.
+            iterations: Number of requests to send for baseline vs chaos payload.
+            
+        Returns:
+            List of chaos findings as dicts.
+        """
+        import asyncio
+
+        active_executor = executor or self.executor
+        if not active_executor:
+            print("   [CHAOS] Timing tests require a live Executor. Skipping.")
+            return []
+
+        print(f"\\n⏱️  [CHAOS MODE] Starting timing attack detection ({iterations} iterations)...")
+
+        if not endpoints:
+            endpoints = self._get_simulated_endpoints()
+
+        for ep in endpoints:
+            endpoint_path = ep.get("path", "/unknown")
+            method = ep.get("method", "POST")
+            fields = ep.get("fields", {})
+            required = ep.get("required_fields", [])
+            
+            # 1. Generate normal payload (baseline)
+            normal_payload = {}
+            if fields:
+                for f, ftype in fields.items():
+                    if ftype in ("integer", "int"):
+                        normal_payload[f] = 1
+                    elif ftype in ("float", "number"):
+                        normal_payload[f] = 1.0
+                    elif ftype in ("boolean", "bool"):
+                        normal_payload[f] = True
+                    elif ftype == "array":
+                        normal_payload[f] = []
+                    elif ftype == "object":
+                        normal_payload[f] = {}
+                    else:
+                        normal_payload[f] = "test"
+            
+            # 2. Get chaos payloads
+            test_cases = self.generate_chaos_payloads(
+                endpoint_path, method, fields, required
+            )
+            
+            if not test_cases:
+                continue
+                
+            print(f"   ⏱️  Testing timing for {method} {endpoint_path}")
+            
+            # Gather baseline times
+            baseline_times = []
+            for _ in range(iterations):
+                resp = await active_executor.execute_attack(
+                    method=method,
+                    path=endpoint_path,
+                    payload=normal_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                if not resp.get("error"):
+                    baseline_times.append(resp.get("elapsed_ms", 0) / 1000.0)
+                await asyncio.sleep(0.01)
+                
+            # Keep only the top 5 most interesting chaos test cases to avoid taking too long
+            sample_cases = test_cases[:5]
+            
+            for tc in sample_cases:
+                chaos_input = tc["chaos_input"]
+                test_times = []
+                
+                # We need to run the specific test case 'iterations' times
+                for _ in range(iterations):
+                    resp = await active_executor.execute_attack(
+                        method=tc.get("method", method),
+                        path=tc.get("endpoint", endpoint_path),
+                        payload=tc.get("payload"),
+                        headers=tc.get("headers")
+                    )
+                    if not resp.get("error"):
+                        test_times.append(resp.get("elapsed_ms", 0) / 1000.0)
+                    await asyncio.sleep(0.01)
+                    
+                # Analyze for timing leak
+                leak_detected, p_val, msg = self.detector.detect_timing_leak(baseline_times, test_times)
+                if leak_detected:
+                    anomaly = AnomalyResult(
+                        anomaly_type="timing_leak",
+                        endpoint=endpoint_path,
+                        method=method,
+                        chaos_input=chaos_input,
+                        status_code=0,
+                        response_time=sum(test_times) / len(test_times),
+                        response_body=msg,
+                        severity="high",
+                    )
+                    self.findings.append(anomaly)
+                    print(f"   🔥 [CHAOS] Timing leak detected on {method} {endpoint_path} ({msg})")
+
+        return [f.to_dict() for f in self.findings if f.anomaly_type == "timing_leak"]
 
     def _get_simulated_endpoints(self) -> List[Dict[str, Any]]:
         """Return simulated endpoints for demonstration."""

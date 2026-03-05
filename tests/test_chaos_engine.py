@@ -226,6 +226,25 @@ class TestAnomalyDetector:
         assert result.severity == "critical"
         assert result.status_code == 0
 
+    def test_detect_timing_leak_positive(self):
+        detector = AnomalyDetector()
+        # Create a set of times with mean 0.1 and std 0.01
+        times_a = [0.10, 0.11, 0.09, 0.10, 0.12, 0.10, 0.09, 0.11, 0.10, 0.10]
+        # Create a set of times with mean 0.5 (clearly significantly different)
+        times_b = [0.50, 0.51, 0.49, 0.52, 0.50, 0.51, 0.49, 0.50, 0.53, 0.50]
+        detected, p_val, msg = detector.detect_timing_leak(times_a, times_b)
+        assert detected is True
+        assert p_val < 0.01
+        assert "Timing Leak Detected" in msg
+
+    def test_detect_timing_leak_negative(self):
+        detector = AnomalyDetector()
+        times_a = [0.10, 0.11, 0.09, 0.10, 0.12, 0.10, 0.09, 0.11, 0.10, 0.10]
+        times_b = [0.11, 0.10, 0.09, 0.10, 0.11, 0.10, 0.09, 0.10, 0.11, 0.10]
+        detected, p_val, msg = detector.detect_timing_leak(times_a, times_b)
+        assert detected is False
+        assert p_val >= 0.01
+        assert "No significant timing leak" in msg
 
 # ─── ChaosEngine Tests ───
 
@@ -487,4 +506,46 @@ class TestChaosEngineLiveExecutor:
         # Baseline was collected via the executor (5 calls for baseline)
         # Mean should be 80ms / 1000 = 0.08s, not the hardcoded 0.122
         assert 0.05 < engine.detector._baseline_mean < 0.15
+
+    @pytest.mark.asyncio
+    async def test_run_timing_tests(self):
+        # We need the mock executor to return significantly different times
+        # to trigger a timing leak.
+        class _TimingMockExecutor:
+            def __init__(self):
+                self.call_count = 0
+            
+            async def execute_attack(self, **kwargs):
+                self.call_count += 1
+                # Make baseline fast, and chaos test cases slow to simulate a leak
+                payload = kwargs.get("payload", {})
+                if payload and payload.get("value") == 1:
+                    # Baseline
+                    elapsed = 50.0  # ms
+                else:
+                    # Chaos payload
+                    elapsed = 500.0 # ms
+                    
+                return {
+                    "status_code": 200, "body": "", "elapsed_ms": elapsed,
+                    "error": None, "headers": {}
+                }
+                
+        mock_exec = _TimingMockExecutor()
+        engine = ChaosEngine(chaos_level=1, executor=mock_exec)
+        endpoints = [{
+            "path": "/api/timing",
+            "method": "POST",
+            "fields": {"value": "integer"},
+            "required_fields": ["value"],
+        }]
+        findings = await engine.run_timing_tests(
+            "http://localhost", endpoints=endpoints, iterations=5
+        )
+        
+        assert isinstance(findings, list)
+        # Should have at least one timing_leak finding
+        assert any(f["anomaly_type"] == "timing_leak" for f in findings)
+        # Should assert the executor was used multiple times (baseline + 5 test cases * 5 iterations)
+        assert mock_exec.call_count > 10
 
