@@ -6,9 +6,7 @@ Performs subdomain enumeration, port scanning, and technology fingerprinting.
 import socket
 import logging
 import asyncio
-import subprocess
 import shutil
-import re
 from typing import List, Dict, Any
 from urllib.parse import urlparse
 import httpx
@@ -65,7 +63,7 @@ class ReconEngine:
 
         logger.info(f"Starting reconnaissance for domain: {domain}")
 
-        results = {
+        results: Dict[str, Any] = {
             "domain": domain,
             "subdomains": [],
             "services": {}, # host -> ports
@@ -80,16 +78,16 @@ class ReconEngine:
         # Add the main domain to the list for scanning
         targets = [domain] + subdomains 
 
-        # 2. Port Scanning
+        # 2. Port Scanning (async)
         if shutil.which("nmap"):
              for target in targets:
-                ports = self.scan_ports(target)
+                ports = await self.scan_ports(target)
                 if ports:
                     results["services"][target] = ports
         else:
              logger.info("Nmap not found. Skipping port scanning.")
 
-        # 3. Technology Fingerprinting
+        # 3. Technology Fingerprinting (async)
         for target in targets:
              # Construct URLs (try http and https)
              urls_to_check = []
@@ -102,7 +100,7 @@ class ReconEngine:
                  urls_to_check.append(f"https://{target}")
 
              for url in urls_to_check:
-                 tech = self.fingerprint_tech(url)
+                 tech = await self.fingerprint_tech(url)
                  if tech:
                      results["technologies"][url] = tech
 
@@ -121,10 +119,10 @@ class ReconEngine:
 
         logger.info(f"Brute-forcing {len(subdomain_words)} subdomains with concurrency {self.concurrency}...")
         
-        found_subdomains = []
+        found_subdomains: List[str] = []
         semaphore = asyncio.Semaphore(self.concurrency)
 
-        async def check_subdomain(sub: str):
+        async def check_subdomain(sub: str) -> None:
             full_domain = f"{sub}.{domain}"
             async with semaphore:
                 try:
@@ -149,29 +147,46 @@ class ReconEngine:
         
         return found_subdomains
 
-    def scan_ports(self, host: str) -> List[int]:
+    async def scan_ports(self, host: str) -> List[int]:
+        """Scan ports using nmap via ``asyncio.create_subprocess_exec``.
+
+        This avoids blocking the event loop during potentially long-running
+        nmap scans (the previous ``subprocess.run`` call could block for up
+        to 5 minutes).
         """
-        Scan ports using nmap.
-        """
-        open_ports = []
+        open_ports: List[int] = []
         cmd = ["nmap", "-T4", "--open", host]
-        
+
         if self.scan_depth == "fast":
             cmd.extend(["-F"])
         elif self.scan_depth == "deep":
             cmd.extend(["-p-"])
-        
+
         try:
             cmd.extend(["-oG", "-"])
-            
-            # Using subprocess with text=True for string output
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            output = result.stdout
-            
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=300
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                logger.error(f"Nmap scan timed out for {host}")
+                return open_ports
+
+            output = stdout.decode("utf-8", errors="replace")
+
             # Parse nmap grepable output
             # Host: 127.0.0.1 ()	Ports: 80/open/tcp//http///, 443/open/tcp//https///
             for line in output.splitlines():
-                if "Ports:" in line and "Status: Up" not in line and "Host:" in line: 
+                if "Ports:" in line and "Status: Up" not in line and "Host:" in line:
                      # Extract ports part
                      try:
                          parts = line.split("Ports: ")[1]
@@ -183,24 +198,29 @@ class ReconEngine:
                      except IndexError:
                          continue
 
-        except subprocess.TimeoutExpired:
-             logger.error(f"Nmap scan timed out for {host}")
-        except subprocess.SubprocessError as e:
+        except OSError as e:
             logger.error(f"Nmap scan failed for {host}: {e}")
         except Exception as e:
             logger.error(f"Error parsing nmap output: {e}")
 
         return open_ports
 
-    def fingerprint_tech(self, url: str) -> Dict[str, Any]:
+    async def fingerprint_tech(self, url: str) -> Dict[str, Any]:
+        """Identify technologies from response headers and body.
+
+        Uses ``httpx.AsyncClient`` instead of the synchronous ``httpx.Client``
+        so that fingerprinting multiple URLs does not stall the event loop.
         """
-        Identify technologies from response headers and body using httpx.
-        """
-        fingerprints = {}
+        fingerprints: Dict[str, Any] = {}
         try:
-            logger.warning("TLS verification disabled for technology fingerprinting - man-in-the-middle risk in untrusted networks")
-            with httpx.Client(verify=False, timeout=self.timeout, follow_redirects=True) as client:
-                response = client.get(url)
+            logger.warning(
+                "TLS verification disabled for technology fingerprinting "
+                "- man-in-the-middle risk in untrusted networks"
+            )
+            async with httpx.AsyncClient(
+                verify=False, timeout=self.timeout, follow_redirects=True
+            ) as client:
+                response = await client.get(url)
                 headers = {k.lower(): v for k, v in response.headers.items()}
                 body = response.text.lower()
 
@@ -221,7 +241,7 @@ class ReconEngine:
                      if "csrftoken" in cookie.name: 
                          fingerprints.setdefault("frameworks", []).append("Django")
 
-                # 4. Body heurstics
+                # 4. Body heuristics
                 if 'content="wordpress"' in body:
                      fingerprints.setdefault("cms", []).append("WordPress")
                 if 'react' in body or 'react-dom' in body:
@@ -231,6 +251,5 @@ class ReconEngine:
 
         except httpx.RequestError as e:
             logger.debug(f"Could not connect to {url} for fingerprinting: {e}")
-            pass
             
         return fingerprints

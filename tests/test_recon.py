@@ -17,14 +17,16 @@ for mod in [
 ]:
     sys.modules[mod] = MagicMock()
 
-import unittest
-from unittest.mock import patch, mock_open
+import asyncio
+import pytest
+from unittest.mock import patch, mock_open, AsyncMock
 import shutil
 import socket
 from chaos_kitten.brain.recon import ReconEngine
 
-class TestReconEngine(unittest.TestCase):
-    def setUp(self):
+
+class TestReconEngine:
+    def setup_method(self):
         self.config = {
             "target": {"base_url": "https://example.com"},
             "recon": {
@@ -38,15 +40,17 @@ class TestReconEngine(unittest.TestCase):
 
     def test_init_defaults(self):
         engine = ReconEngine({"target": {"base_url": "https://example.com"}})
-        self.assertFalse(engine.enabled)
-        self.assertEqual(engine.ports, [80, 443])
+        assert engine.enabled is False
+        assert engine.ports == [80, 443]
 
-    def test_run_disabled(self):
+    @pytest.mark.asyncio
+    async def test_run_disabled(self):
         self.engine.enabled = False
-        results = self.engine.run()
-        self.assertEqual(results, {})
+        results = await self.engine.run()
+        assert results == {}
 
-    def test_enumerate_subdomains(self):
+    @pytest.mark.asyncio
+    async def test_enumerate_subdomains(self):
         mock_file_content = "www\napi"
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
             with patch("socket.gethostbyname") as mock_dns:
@@ -56,75 +60,121 @@ class TestReconEngine(unittest.TestCase):
                     raise socket.gaierror
                 mock_dns.side_effect = dns_side_effect
 
-                # Need to update wordlist path config or ensure open calls correct path
-                # Since we mock open, the path doesn't matter much as long as it opens something.
-                subs = self.engine.enumerate_subdomains("example.com")
-                self.assertIn("www.example.com", subs)
+                subs = await self.engine.enumerate_subdomains("example.com")
+                assert "www.example.com" in subs
                 # api.example.com raises gaierror, so it shouldn't be in subs
-                self.assertNotIn("api.example.com", subs)
+                assert "api.example.com" not in subs
 
-    @patch("shutil.which")
-    @patch("subprocess.run")
-    def test_scan_ports(self, mock_run, mock_which):
-        # Mock nmap existence
-        mock_which.return_value = "/usr/bin/nmap"
-        
-        # Mock nmap output
-        mock_result = MagicMock()
-        mock_result.stdout = "Host: 127.0.0.1 ()	Ports: 80/open/tcp//http///, 443/open/tcp//https///"
-        mock_run.return_value = mock_result
-        
-        # We need to make sure self.engine.scan_depth is what we expect
-        self.engine.scan_depth = "fast"
-        ports = self.engine.scan_ports("example.com")
-        
-        self.assertIn(80, ports)
-        self.assertIn(443, ports)
-        
-        # Verify arguments based on scan_depth="fast"
-        args = mock_run.call_args[0][0]
-        self.assertIn("-F", args)
+    @pytest.mark.asyncio
+    async def test_scan_ports(self):
+        """Test async scan_ports with mocked asyncio subprocess."""
+        nmap_output = "Host: 127.0.0.1 ()\tPorts: 80/open/tcp//http///, 443/open/tcp//https///"
 
-    @patch("httpx.Client")
-    def test_fingerprint_tech(self, mock_client_cls):
-        mock_client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = mock_client
-        
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (
+            nmap_output.encode("utf-8"),
+            b"",
+        )
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            self.engine.scan_depth = "fast"
+            ports = await self.engine.scan_ports("example.com")
+
+        assert 80 in ports
+        assert 443 in ports
+        # Verify -F flag was included for fast scan
+        call_args = mock_exec.call_args[0]
+        assert "-F" in call_args
+
+    @pytest.mark.asyncio
+    async def test_scan_ports_timeout(self):
+        """Test that scan_ports handles timeout gracefully."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate.side_effect = asyncio.TimeoutError()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            ports = await self.engine.scan_ports("example.com")
+
+        assert ports == []
+        mock_proc.kill.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_scan_ports_deep(self):
+        """Test deep scan passes -p- flag."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            self.engine.scan_depth = "deep"
+            await self.engine.scan_ports("example.com")
+
+        call_args = mock_exec.call_args[0]
+        assert "-p-" in call_args
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_tech(self):
+        """Test async fingerprint_tech with mocked httpx.AsyncClient."""
         mock_response = MagicMock()
         mock_response.headers = {"Server": "nginx", "X-Powered-By": "PHP/7.4"}
         mock_response.text = '<html><body>Content="WordPress"</body></html>'
         cookie = MagicMock()
         cookie.name = "PHPSESSID"
-        # Ensure name attribute is set on mock object
         mock_response.cookies = [cookie]
-        
-        mock_client.get.return_value = mock_response
-        
-        tech = self.engine.fingerprint_tech("http://example.com")
-        
-        self.assertEqual(tech.get("server"), "nginx")
-        self.assertEqual(tech.get("powered_by"), "PHP/7.4")
-        self.assertIn("WordPress", tech.get("cms", []))
-        self.assertIn("PHP", tech.get("frameworks", []))
 
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            tech = await self.engine.fingerprint_tech("http://example.com")
+
+        assert tech.get("server") == "nginx"
+        assert tech.get("powered_by") == "PHP/7.4"
+        assert "WordPress" in tech.get("cms", [])
+        assert "PHP" in tech.get("frameworks", [])
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_tech_connection_error(self):
+        """Test that fingerprint_tech handles connection errors gracefully."""
+        import httpx
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.RequestError("Connection refused")
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            tech = await self.engine.fingerprint_tech("http://example.com")
+
+        assert tech == {}
+
+    @pytest.mark.asyncio
     @patch("chaos_kitten.brain.recon.ReconEngine.enumerate_subdomains")
     @patch("chaos_kitten.brain.recon.ReconEngine.scan_ports")
     @patch("chaos_kitten.brain.recon.ReconEngine.fingerprint_tech")
     @patch("shutil.which")
-    def test_run_integration(self, mock_which, mock_fingerprint, mock_scan, mock_enum):
+    async def test_run_integration(self, mock_which, mock_fingerprint, mock_scan, mock_enum):
         mock_enum.return_value = ["www.example.com"]
-        mock_which.return_value = True # nmap exists
+        mock_which.return_value = True  # nmap exists
         mock_scan.return_value = [80]
         mock_fingerprint.return_value = {"server": "test"}
-        
-        results = self.engine.run()
-        
-        self.assertEqual(results["domain"], "example.com")
-        self.assertIn("www.example.com", results["subdomains"])
-        self.assertEqual(results["services"]["www.example.com"], [80])
-        # It should try http and https for port 80? Or just http since 80 is usually http
-        # My code uses port logic: 443 -> https, others -> http
-        self.assertIn("http://www.example.com:80", results["technologies"])
+
+        results = await self.engine.run()
+
+        assert results["domain"] == "example.com"
+        assert "www.example.com" in results["subdomains"]
+        assert results["services"]["www.example.com"] == [80]
+        assert "http://www.example.com:80" in results["technologies"]
+
 
 if __name__ == "__main__":
-    unittest.main()
+    pytest.main([__file__])
