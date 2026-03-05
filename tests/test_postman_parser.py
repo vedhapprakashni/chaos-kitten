@@ -1,6 +1,5 @@
 import json
 import pytest
-from pathlib import Path
 from chaos_kitten.brain.postman_parser import PostmanParser
 
 @pytest.fixture

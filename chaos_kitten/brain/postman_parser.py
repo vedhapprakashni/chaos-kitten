@@ -103,13 +103,13 @@ class PostmanParser:
         
         return result
 
-    def _extract_endpoints(self, items: List[Dict[str, Any]], parent_auth: Optional[Dict] = None, tags: List[str] = None) -> None:
+    def _extract_endpoints(self, items: List[Dict[str, Any]], parent_auth: Optional[Dict] = None, tags: Optional[List[str]] = None) -> None:
         """Recursively extract endpoints from Postman items.
         
         Args:
             items (List[Dict[str, Any]]): List of items (folders or requests).
             parent_auth (Optional[Dict]): Authorization inherited from parent folder.
-            tags (List[str]): List of parent folder names to use as tags.
+            tags (Optional[List[str]]): List of parent folder names to use as tags.
         """
         if tags is None:
             tags = []
@@ -178,7 +178,7 @@ class PostmanParser:
                 resolved_url = self._resolve_variables(raw_url)
                 parsed = urlparse(resolved_url)
                 path = parsed.path
-                 
+
             # Extract query params
             for q in url_obj.get('query', []):
                 if not q.get('disabled'):
