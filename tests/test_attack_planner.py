@@ -53,14 +53,8 @@ def low_severity_profile_yaml(toys_dir):
 @pytest.fixture
 def mock_llm_setup():
     """Mock the LLM initialization to avoid external calls."""
-    with patch("chaos_kitten.brain.attack_planner.ChatAnthropic") as mock_anthropic, \
-         patch("chaos_kitten.brain.attack_planner.ChatOpenAI") as mock_openai, \
-         patch("chaos_kitten.brain.attack_planner.ChatOllama") as mock_ollama:
-        yield {
-            "anthropic": mock_anthropic,
-            "openai": mock_openai,
-            "ollama": mock_ollama
-        }
+    with patch.object(AttackPlanner, "_init_llm", return_value=MagicMock()):
+        yield  # Tests don't need the mock object
 
 # Tests
 

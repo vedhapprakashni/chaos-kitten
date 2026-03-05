@@ -91,7 +91,7 @@ def sample_config():
     }
 
 
-@patch("chaos_kitten.brain.attack_planner.ChatAnthropic")
+@patch.object(NaturalLanguagePlanner, "_init_llm", return_value=MagicMock())
 def test_natural_language_planner_payment_goal(mock_llm, sample_endpoints, sample_config):
     """Test NL planner identifies payment-related endpoints for price manipulation goal."""
     # Mock LLM response
@@ -151,7 +151,7 @@ def test_natural_language_planner_payment_goal(mock_llm, sample_endpoints, sampl
                 assert "idor_basic" in result["profiles"]
 
 
-@patch("chaos_kitten.brain.attack_planner.ChatAnthropic")
+@patch.object(NaturalLanguagePlanner, "_init_llm", return_value=MagicMock())
 def test_natural_language_planner_fallback(mock_llm, sample_endpoints, sample_config):
     """Test NL planner fallback when LLM fails."""
     mock_llm_instance = MagicMock()
@@ -182,7 +182,7 @@ def test_natural_language_planner_fallback(mock_llm, sample_endpoints, sample_co
             assert "reasoning" in result
 
 
-@patch("chaos_kitten.brain.attack_planner.ChatAnthropic")
+@patch.object(NaturalLanguagePlanner, "_init_llm", return_value=MagicMock())
 def test_natural_language_planner_load_profiles(mock_llm):
     """Test loading available attack profiles."""
     config = {"agent": {"llm_provider": "anthropic"}}
@@ -199,7 +199,7 @@ def test_natural_language_planner_load_profiles(mock_llm):
     assert "SQL Injection - Basic" in profiles or "SSRF" in profiles
 
 
-@patch("chaos_kitten.brain.attack_planner.ChatAnthropic")
+@patch.object(NaturalLanguagePlanner, "_init_llm", return_value=MagicMock())
 def test_natural_language_planner_auth_goal(mock_llm, sample_endpoints, sample_config):
     """Test NL planner for authentication testing goal."""
     mock_llm_instance = MagicMock()

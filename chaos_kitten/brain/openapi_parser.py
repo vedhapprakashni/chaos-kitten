@@ -340,7 +340,7 @@ class OpenAPIParser:
                 
                 servers.append(url)
         
-        elif 'host' in self.spec:
+        elif self.spec.get('swagger') == '2.0':
             # Swagger 2.0
             schemes = self.spec.get('schemes', ['https'])
             host = self.spec.get('host')
@@ -350,9 +350,13 @@ class OpenAPIParser:
             if base_path and not base_path.startswith('/'):
                 base_path = '/' + base_path
             
-            # Construct URLs for each scheme
-            for scheme in schemes:
-                servers.append(f"{scheme}://{host}{base_path}")
+            if host:
+                # Construct URLs for each scheme
+                for scheme in schemes:
+                    servers.append(f"{scheme}://{host}{base_path}")
+            else:
+                # If host is missing, fallback to basePath or '/'
+                servers.append(base_path if base_path else '/')
         
         return servers
 
