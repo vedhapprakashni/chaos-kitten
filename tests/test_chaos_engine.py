@@ -233,24 +233,18 @@ class TestAnomalyDetector:
         # Create a set of times with mean 0.5 (clearly significantly different)
         times_b = [0.50, 0.51, 0.49, 0.52, 0.50, 0.51, 0.49, 0.50, 0.53, 0.50]
         detected, p_val, msg = detector.detect_timing_leak(times_a, times_b)
-        # Should detect a leak if scipy is installed. We don't want tests to fail if scipy isn't there,
-        # but in our environment we just added it.
-        from chaos_kitten.brain.chaos_engine import HAS_SCIPY
-        if HAS_SCIPY:
-            assert detected is True
-            assert p_val < 0.01
-            assert "Timing Leak Detected" in msg
+        assert detected is True
+        assert p_val < 0.01
+        assert "Timing Leak Detected" in msg
 
     def test_detect_timing_leak_negative(self):
         detector = AnomalyDetector()
         times_a = [0.10, 0.11, 0.09, 0.10, 0.12, 0.10, 0.09, 0.11, 0.10, 0.10]
         times_b = [0.11, 0.10, 0.09, 0.10, 0.11, 0.10, 0.09, 0.10, 0.11, 0.10]
         detected, p_val, msg = detector.detect_timing_leak(times_a, times_b)
-        from chaos_kitten.brain.chaos_engine import HAS_SCIPY
-        if HAS_SCIPY:
-            assert detected is False
-            assert p_val >= 0.01
-            assert "No significant timing leak" in msg
+        assert detected is False
+        assert p_val >= 0.01
+        assert "No significant timing leak" in msg
 
 # ─── ChaosEngine Tests ───
 
@@ -549,11 +543,9 @@ class TestChaosEngineLiveExecutor:
             "http://localhost", endpoints=endpoints, iterations=5
         )
         
-        from chaos_kitten.brain.chaos_engine import HAS_SCIPY
-        if HAS_SCIPY:
-            assert isinstance(findings, list)
-            # Should have at least one timing_leak finding
-            assert any(f["anomaly_type"] == "timing_leak" for f in findings)
-            # Should assert the executor was used multiple times (baseline + 5 test cases * 5 iterations)
-            assert mock_exec.call_count > 10
+        assert isinstance(findings, list)
+        # Should have at least one timing_leak finding
+        assert any(f["anomaly_type"] == "timing_leak" for f in findings)
+        # Should assert the executor was used multiple times (baseline + 5 test cases * 5 iterations)
+        assert mock_exec.call_count > 10
 

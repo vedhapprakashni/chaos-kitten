@@ -16,11 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from chaos_kitten.paws.executor import Executor
 
-try:
-    from scipy import stats
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -565,8 +561,7 @@ class AnomalyDetector:
         Returns:
             Tuple of (leak_detected, p_value, message).
         """
-        if not HAS_SCIPY:
-            return False, 1.0, "scipy not installed, timing leak detection disabled"
+        # SciPy is a required dependency as per pyproject.toml
             
         if len(times_a) < 2 or len(times_b) < 2:
             return False, 1.0, "Insufficient data points for t-test"
@@ -1004,12 +999,18 @@ class ChaosEngine:
             normal_payload = {}
             if fields:
                 for f, ftype in fields.items():
-                    if ftype in ("integer", "int"): normal_payload[f] = 1
-                    elif ftype in ("float", "number"): normal_payload[f] = 1.0
-                    elif ftype in ("boolean", "bool"): normal_payload[f] = True
-                    elif ftype == "array": normal_payload[f] = []
-                    elif ftype == "object": normal_payload[f] = {}
-                    else: normal_payload[f] = "test"
+                    if ftype in ("integer", "int"):
+                        normal_payload[f] = 1
+                    elif ftype in ("float", "number"):
+                        normal_payload[f] = 1.0
+                    elif ftype in ("boolean", "bool"):
+                        normal_payload[f] = True
+                    elif ftype == "array":
+                        normal_payload[f] = []
+                    elif ftype == "object":
+                        normal_payload[f] = {}
+                    else:
+                        normal_payload[f] = "test"
             
             # 2. Get chaos payloads
             test_cases = self.generate_chaos_payloads(
@@ -1030,7 +1031,8 @@ class ChaosEngine:
                     payload=normal_payload,
                     headers={"Content-Type": "application/json"}
                 )
-                baseline_times.append(resp.get("elapsed_ms", 0) / 1000.0)
+                if not resp.get("error"):
+                    baseline_times.append(resp.get("elapsed_ms", 0) / 1000.0)
                 await asyncio.sleep(0.01)
                 
             # Keep only the top 5 most interesting chaos test cases to avoid taking too long
@@ -1048,7 +1050,8 @@ class ChaosEngine:
                         payload=tc.get("payload"),
                         headers=tc.get("headers")
                     )
-                    test_times.append(resp.get("elapsed_ms", 0) / 1000.0)
+                    if not resp.get("error"):
+                        test_times.append(resp.get("elapsed_ms", 0) / 1000.0)
                     await asyncio.sleep(0.01)
                     
                 # Analyze for timing leak
