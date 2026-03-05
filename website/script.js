@@ -62,4 +62,58 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+
+    // Fetch and display contributors
+    fetchContributors();
 });
+
+async function fetchContributors() {
+    const grid = document.getElementById('contributors-grid');
+    const repo = 'mdhaarishussain/chaos-kitten';
+    const contributorsUrl = `https://api.github.com/repos/${repo}/contributors?per_page=100`;
+
+    try {
+        const response = await fetch(contributorsUrl);
+        if (!response.ok) throw new Error('Failed to fetch contributors');
+        
+        const contributors = await response.json();
+        
+        // Clear loading skeletons
+        grid.innerHTML = '';
+        
+        // Display contributors
+        contributors.forEach(contributor => {
+            const card = createContributorCard(contributor);
+            grid.appendChild(card);
+        });
+    } catch (error) {
+        console.error('Error fetching contributors:', error);
+        // Display error message or default contributors
+        grid.innerHTML = '<p style="text-align: center; color: var(--text-muted); grid-column: 1/-1;">Failed to load contributors. Please check back later.</p>';
+    }
+}
+
+function createContributorCard(contributor) {
+    const card = document.createElement('div');
+    card.className = 'contributor-card';
+    
+    const name = contributor.login;
+    const avatarUrl = contributor.avatar_url;
+    const profileUrl = contributor.html_url;
+    const contributions = contributor.contributions;
+    
+    card.innerHTML = `
+        <div class="contributor-avatar">
+            <img src="${avatarUrl}" alt="${name}" title="${name}">
+        </div>
+        <div class="contributor-name">${name}</div>
+        <div class="contributor-role">${contributions} contribution${contributions !== 1 ? 's' : ''}</div>
+        <div class="contributor-links">
+            <a href="${profileUrl}" target="_blank" rel="noopener noreferrer" class="contributor-link" title="GitHub Profile">
+                <i class="fab fa-github"></i>
+            </a>
+        </div>
+    `;
+    
+    return card;
+}
