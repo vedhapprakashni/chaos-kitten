@@ -341,6 +341,35 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
     console.print(
         f"[green]Executed {len(all_results)} attacks, found {len(all_findings)} potential vulnerabilities.[/green]"
     )
+
+    # ── PoC Generation Phase ─────────────────────────────────
+    if all_findings:
+        try:
+            from chaos_kitten.brain.poc_generator import PoCGenerator
+
+            poc_gen = PoCGenerator(
+                base_url=base_url,
+                output_dir=app_config.get("reporting", {}).get("poc_dir", "pocs"),
+                llm_provider=app_config.get("agent", {}).get("llm_provider", "anthropic"),
+            )
+
+            # Normalise findings to dicts for the generator
+            normalised = []
+            for f in all_findings:
+                if isinstance(f, dict):
+                    normalised.append(f)
+                elif hasattr(f, "__dict__"):
+                    d = {k: v for k, v in f.__dict__.items() if not k.startswith("_")}
+                    normalised.append(d)
+
+            poc_paths = poc_gen.generate_batch(normalised)
+            if poc_paths:
+                console.print(
+                    f"[bold magenta]📝 Generated {len(poc_paths)} PoC script(s) in '{poc_gen.output_dir}'[/bold magenta]"
+                )
+        except Exception as e:
+            logger.warning("PoC generation phase failed: %s", e)
+
     return {"results": all_results, "findings": all_findings}
 
 
