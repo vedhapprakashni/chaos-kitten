@@ -82,8 +82,10 @@ class Reporter:
 
         formats = [f.strip() for f in self.output_format.split(",")]
         last_output_file = None
-
+        valid_formats = {"html", "pdf", "markdown", "json", "sarif", "junit"}
         for fmt in formats:
+            if fmt not in valid_formats:
+                raise ValueError(f"Unknown format: '{fmt}'. Supported formats: {', '.join(sorted(valid_formats))}")
             # Generate filename
             # CI/CD Compatibility: If sarif, use standard names
             if fmt == "sarif":
@@ -655,7 +657,7 @@ class Reporter:
                 return "note"
 
     
-def _generate_junit(self, results: Dict[str, Any], target: str) -> str:
+    def _generate_junit(self, results: Dict[str, Any], target: str) -> str:
         """Generate JUnit XML report.
 
         Args:
