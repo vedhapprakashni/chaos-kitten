@@ -80,7 +80,7 @@ toys:
     - "dos"
 
 reporting:
-  format: "html"
+  format: "html"  # html, pdf, markdown, json, sarif, junit
   output_path: "./reports"
   include_poc: true
   include_remediation: true
@@ -123,7 +123,7 @@ def scan(
         "html",
         "--format",
         "-f",
-        help="Format of the report (html, markdown, json, sarif, junit)",
+        help="Format of the report (html, pdf, markdown, json, sarif, junit)",
     ),
     fail_on: str = typer.Option(
         "none",

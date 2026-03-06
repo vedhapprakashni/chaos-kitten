@@ -55,9 +55,11 @@ dependencies = [
     "langchain-community>=0.0.10",
     "langchain-ollama>=0.2.0",
     "graphql-core>=3.2.0",
+    "scipy>=1.10.0",
 ]
 
 [project.optional-dependencies]
+pdf = ["weasyprint>=61.0.0"]
 mfa = [
     "pyotp>=2.9.0",
 ]

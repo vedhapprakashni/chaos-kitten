@@ -192,7 +192,7 @@ class OpenAPIParser:
         
         Args:
             parameters (List[Dict[str, Any]]): List of parameter definitions.
-            consumes (List[str] | None): Swagger 2.0 consumes list for media type selection.
+            consumes (Optional[List[str]]): Swagger 2.0 consumes list for media type selection.
             
         Returns:
             Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]: 
