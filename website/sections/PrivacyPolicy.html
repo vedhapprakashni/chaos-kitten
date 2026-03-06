@@ -275,14 +275,6 @@
 
 <body>
     <div class="shell">
-        <!-- Top bar with Go Back button -->
-        <div class="top-bar">
-            <button class="back-btn" onclick="window.history.back()">
-                <span class="icon">←</span>
-                <span>Go back</span>
-            </button>
-        </div>
-
         <!-- Header -->
         <header class="page-header">
             <div class="page-badge">🔒 Legal Document</div>
@@ -355,7 +347,8 @@
                         <li><strong>API responses:</strong> HTTP responses from your target API are analyzed for
                             vulnerabilities</li>
                         <li><strong>Configuration files:</strong> Settings from <code>chaos-kitten.yaml</code> and
-                            <code>.env</code> files</li>
+                            <code>.env</code> files
+                        </li>
                         <li><strong>Authentication credentials:</strong> API keys, tokens, or TOTP secrets you configure
                             (stored locally only)</li>
                         <li><strong>Scan results:</strong> Generated reports are saved to your local filesystem</li>
@@ -377,9 +370,9 @@
                             <strong>⚠️ Important:</strong> Sensitive data from your API responses may be sent to
                             third-party LLM providers. Review their privacy policies:
                             <br><br>
-                            • <a href="https://www.anthropic.com/privacy" target="_blank">Anthropic Privacy Policy</a>
+                            • <a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener noreferrer">Anthropic Privacy Policy</a>
                             <br>
-                            • <a href="https://openai.com/privacy/" target="_blank">OpenAI Privacy Policy</a>
+                            • <a href="https://openai.com/privacy/" target="_blank" rel="noopener noreferrer">OpenAI Privacy Policy</a>
                         </p>
                     </div>
                 </div>
@@ -411,6 +404,29 @@
                             integrations.
                         </p>
                     </div>
+                </div>
+            </div>
+
+            <!-- Cookies & Tracking -->
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="icon">🍪</span>
+                    Cookies & Tracking
+                </h2>
+                <div class="section-content">
+                    <p>
+                        Chaos Kitten does not use cookies or tracking technologies. Since it runs locally on your
+                        machine:
+                    </p>
+                    <ul>
+                        <li>No cookies are set by the tool itself</li>
+                        <li>No analytics or tracking pixels are used</li>
+                        <li>No third-party trackers are embedded</li>
+                        <li>Browser local storage is not used for data collection</li>
+                    </ul>
+                    <p>
+                        When you access web-based documentation or GitHub repositories, their cookie policies apply.
+                    </p>
                 </div>
             </div>
 
@@ -497,7 +513,7 @@
                     </p>
                     <ul>
                         <li>Review the complete source code on <a href="https://github.com/mdhaarishussain/chaos-kitten"
-                                target="_blank">GitHub</a></li>
+                                target="_blank" rel="noopener noreferrer">GitHub</a></li>
                         <li>Audit how data is processed and transmitted</li>
                         <li>Self-host and modify the tool for your needs</li>
                         <li>Contribute improvements or security fixes</li>
@@ -549,7 +565,7 @@
                     </ul>
                     <p>
                         If you discover a security issue in Chaos Kitten itself, please report it via <a
-                            href="https://github.com/mdhaarishussain/chaos-kitten/security" target="_blank">GitHub
+                            href="https://github.com/mdhaarishussain/chaos-kitten/security" target="_blank" rel="noopener noreferrer">GitHub
                             Security Advisories</a>.
                     </p>
                 </div>
@@ -567,7 +583,7 @@
                     </p>
                     <ul>
                         <li>This page (with updated "Last updated" date)</li>
-                        <li>The <a href="https://github.com/mdhaarishussain/chaos-kitten" target="_blank">GitHub
+                        <li>The <a href="https://github.com/mdhaarishussain/chaos-kitten" target="_blank" rel="noopener noreferrer">GitHub
                                 repository</a></li>
                     </ul>
                     <p>
@@ -584,13 +600,13 @@
                 </p>
                 <p>
                     • Open an issue on <a href="https://github.com/mdhaarishussain/chaos-kitten/issues"
-                        target="_blank">GitHub Issues</a>
+                        target="_blank" rel="noopener noreferrer">GitHub Issues</a>
                     <br>
                     • Join the discussion on <a href="https://github.com/mdhaarishussain/chaos-kitten/discussions"
-                        target="_blank">GitHub Discussions</a>
+                        target="_blank" rel="noopener noreferrer">GitHub Discussions</a>
                     <br>
                     • Contact the maintainer: <a href="https://github.com/mdhaarishussain"
-                        target="_blank">@mdhaarishussain</a>
+                        target="_blank" rel="noopener noreferrer">@mdhaarishussain</a>
                 </p>
             </div>
         </div>
