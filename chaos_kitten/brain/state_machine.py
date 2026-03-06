@@ -18,7 +18,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -84,6 +86,51 @@ class StateFinding:
 
 # Matches path templates like /users/{id}, /orders/{order_id}
 _PARAM_RE = re.compile(r"\{(\w+)\}")
+
+# Matches common ID field names: id, _id, itemId, item_id, product-id, etc.
+_ID_FIELD_RE = re.compile(r"(?i)^.*[_-]?id$")
+
+
+def _substitute_params(path: str, base_id: str) -> str:
+    """Replace path template parameters with incremental IDs.
+
+    For nested paths like ``/orders/{order_id}/items/{item_id}`` each
+    parameter placeholder receives a distinct value starting from
+    *base_id* and incrementing by 1.
+
+    If *base_id* is numeric the counter increments normally.  For
+    non-numeric values (e.g. UUIDs) only the first parameter gets
+    *base_id* and subsequent ones receive sequential integers starting
+    from 1.
+    """
+    try:
+        start = int(base_id)
+        counter = [start]
+
+        def _replacer(_match: re.Match) -> str:
+            val = str(counter[0])
+            counter[0] += 1
+            return val
+    except ValueError:
+        # Non-numeric ID (e.g. UUID) — use it for the first param,
+        # then fall back to sequential integers.
+        first_used = [False]
+        seq = [1]
+
+        def _replacer(_match: re.Match) -> str:  # noqa: F811
+            if not first_used[0]:
+                first_used[0] = True
+                return base_id
+            val = str(seq[0])
+            seq[0] += 1
+            return val
+
+    return _PARAM_RE.sub(_replacer, path)
+
+
+def _generate_nonexistent_id() -> str:
+    """Generate a random ID unlikely to collide with real resources."""
+    return str(random.randint(10_000_000, 99_999_999))
 
 
 def _extract_resource(path: str) -> Optional[str]:
@@ -220,40 +267,45 @@ class StateMachineAgent:
 
         # Strategy: call the LAST step directly without executing earlier steps
         last = chain.steps[-1]
-        path = _PARAM_RE.sub("1", last.path)  # substitute params with "1"
+        path = _substitute_params(last.path, "1")
 
         resp = await self._execute(last.method, path)
         if resp and self._is_success(resp):
-            findings.append(StateFinding(
-                finding_type="broken_flow",
-                chain_name=chain.name,
-                description=(
-                    f"Endpoint {last.key} succeeded without prior steps "
-                    f"({' → '.join(chain.step_keys())})"
-                ),
-                severity="high",
-                evidence=f"Status {resp.get('status_code')} on direct call",
-                endpoint=last.key,
-                recommendation=(
-                    "Enforce server-side state validation. Ensure that "
-                    "dependent operations verify prerequisite state before "
-                    "execution."
-                ),
-            ))
+            # Verify this is not a false positive from idempotent operations
+            if not await self._is_idempotent_false_positive(last.method, path):
+                findings.append(StateFinding(
+                    finding_type="broken_flow",
+                    chain_name=chain.name,
+                    description=(
+                        f"Endpoint {last.key} succeeded without prior steps "
+                        f"({' → '.join(chain.step_keys())})"
+                    ),
+                    severity="high",
+                    evidence=f"Status {resp.get('status_code')} on direct call",
+                    endpoint=last.key,
+                    recommendation=(
+                        "Enforce server-side state validation. Ensure that "
+                        "dependent operations verify prerequisite state before "
+                        "execution."
+                    ),
+                ))
 
         # Strategy: skip middle steps (for chains with ≥3 steps)
         if len(chain.steps) >= 3:
             first = chain.steps[0]
             last = chain.steps[-1]
             # Execute first, skip middle, execute last
-            first_path = _PARAM_RE.sub("1", first.path)
-            resp_first = await self._execute(first.method, first_path, payload={"test": "state"})
+            first_path = _substitute_params(first.path, "1")
+            first_payload = first.request_body or {"test": "state"}
+            resp_first = await self._execute(
+                first.method, first_path, payload=first_payload,
+            )
 
             if resp_first and self._is_success(resp_first):
                 # Try to extract an ID from the response
                 resource_id = self._extract_id(resp_first)
-                last_path = _PARAM_RE.sub(
-                    str(resource_id) if resource_id else "1", last.path
+                last_path = _substitute_params(
+                    last.path, str(resource_id) if resource_id else "1",
                 )
                 resp_last = await self._execute(last.method, last_path)
                 if resp_last and self._is_success(resp_last):
@@ -287,7 +339,8 @@ class StateMachineAgent:
         reversed_steps = list(reversed(chain.steps))
         # Execute the would-be LAST step first (e.g. DELETE before POST)
         step = reversed_steps[0]
-        path = _PARAM_RE.sub("99999", step.path)  # non-existent resource
+        fake_id = _generate_nonexistent_id()
+        path = _substitute_params(step.path, fake_id)
 
         resp = await self._execute(step.method, path)
         if resp and self._is_success(resp):
@@ -299,7 +352,7 @@ class StateMachineAgent:
                     f"(out-of-order execution)"
                 ),
                 severity="medium",
-                evidence=f"Status {resp.get('status_code')} for id=99999",
+                evidence=f"Status {resp.get('status_code')} for id={fake_id}",
                 endpoint=step.key,
                 recommendation=(
                     "Return 404 for non-existent resources and validate "
@@ -330,9 +383,10 @@ class StateMachineAgent:
             return findings
 
         # User A creates
+        create_payload = create_step.request_body or {"test": "idor_probe"}
         resp_create = await self._execute(
             create_step.method, create_step.path,
-            payload={"test": "idor_probe"},
+            payload=create_payload,
         )
         if not resp_create or not self._is_success(resp_create):
             return findings
@@ -342,7 +396,10 @@ class StateMachineAgent:
             return findings
 
         # User B tries to read using User A's ID
-        read_path = _PARAM_RE.sub(str(resource_id), read_step.path)
+        # NOTE: The executor merges custom headers *on top of* defaults
+        # (via dict.update), so the Authorization header here correctly
+        # overrides the default User-A token.
+        read_path = _substitute_params(read_step.path, str(resource_id))
         resp_read = await self._execute(
             read_step.method, read_path,
             headers={"Authorization": f"Bearer {self.auth_token_b}"},
@@ -379,7 +436,15 @@ class StateMachineAgent:
         payload: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Thin wrapper around ``executor.execute_attack``."""
+        """Thin wrapper around ``executor.execute_attack``.
+
+        .. note::
+
+           The *Executor* merges custom **headers** on top of its
+           client-level defaults via ``dict.update()``, so any
+           ``Authorization`` header passed here will **override** the
+           default token.  IDOR tests rely on this behaviour.
+        """
         if not self.executor:
             logger.warning("No executor configured — skipping %s %s", method, path)
             return None
@@ -394,6 +459,30 @@ class StateMachineAgent:
             logger.debug("State machine request failed: %s %s — %s", method, path, exc)
             return None
 
+    async def _is_idempotent_false_positive(
+        self, method: str, path: str,
+    ) -> bool:
+        """Check whether a successful response is a false positive.
+
+        For idempotent methods (DELETE, PUT, PATCH), a 2xx on a
+        non-existent resource may simply mean the API treats the
+        operation as a no-op.  We follow up with a GET on the same path
+        to see whether the resource actually exists.
+        """
+        if method not in ("DELETE", "PUT", "PATCH"):
+            return False
+
+        verify_resp = await self._execute("GET", path)
+        if verify_resp and verify_resp.get("status_code") == 404:
+            # Resource does not exist — the original success was
+            # idempotent behaviour, not a broken-flow vulnerability.
+            logger.debug(
+                "Skipping false-positive broken-flow for %s %s "
+                "(idempotent — GET returned 404)", method, path,
+            )
+            return True
+        return False
+
     @staticmethod
     def _is_success(resp: Dict[str, Any]) -> bool:
         code = resp.get("status_code", 0)
@@ -401,7 +490,11 @@ class StateMachineAgent:
 
     @staticmethod
     def _extract_id(resp: Dict[str, Any]) -> Optional[str]:
-        """Try to pull a resource ID from the response body."""
+        """Try to pull a resource ID from the response body.
+
+        Matches any key ending in ``id`` (case-insensitive), such as
+        ``id``, ``_id``, ``itemId``, ``product_id``, ``order-id``, etc.
+        """
         body = resp.get("body", "")
         if isinstance(body, str):
             try:
@@ -413,8 +506,13 @@ class StateMachineAgent:
         else:
             return None
 
-        # Try common ID field names
-        for key in ("id", "ID", "_id", "resource_id", "order_id", "user_id"):
+        # Prefer exact common names first for deterministic results
+        for key in ("id", "ID", "_id"):
             if key in data:
+                return str(data[key])
+
+        # Fall back to regex for camelCase / snake_case / kebab-case IDs
+        for key in data:
+            if _ID_FIELD_RE.match(key):
                 return str(data[key])
         return None

@@ -11,6 +11,7 @@ from chaos_kitten.brain.state_machine import (
     StateMachineAgent,
     _extract_resource,
     _is_parameterised,
+    _substitute_params,
 )
 
 
@@ -21,6 +22,12 @@ CRUD_ENDPOINTS = [
     {"method": "GET", "path": "/api/orders/{id}", "parameters": []},
     {"method": "PUT", "path": "/api/orders/{id}", "parameters": []},
     {"method": "DELETE", "path": "/api/orders/{id}", "parameters": []},
+]
+
+NESTED_ENDPOINTS = [
+    {"method": "POST", "path": "/api/orders", "parameters": []},
+    {"method": "GET", "path": "/api/orders/{order_id}/items/{item_id}", "parameters": []},
+    {"method": "DELETE", "path": "/api/orders/{order_id}/items/{item_id}", "parameters": []},
 ]
 
 TWO_RESOURCE_ENDPOINTS = CRUD_ENDPOINTS + [
@@ -64,6 +71,35 @@ class TestHelpers:
 
     def test_is_parameterised_false(self):
         assert _is_parameterised("/orders") is False
+
+
+# ── Unit tests: _substitute_params ─────────────────────────────────────
+
+
+class TestSubstituteParams:
+    def test_single_param(self):
+        result = _substitute_params("/orders/{id}", "42")
+        assert result == "/orders/42"
+
+    def test_nested_params_get_unique_ids(self):
+        """Each placeholder must receive a distinct value."""
+        result = _substitute_params("/orders/{order_id}/items/{item_id}", "42")
+        assert result == "/orders/42/items/43"
+
+    def test_three_params(self):
+        result = _substitute_params("/a/{x}/b/{y}/c/{z}", "10")
+        assert result == "/a/10/b/11/c/12"
+
+    def test_no_params(self):
+        result = _substitute_params("/orders", "1")
+        assert result == "/orders"
+
+    def test_non_numeric_base_id(self):
+        """UUID-style IDs: first param gets the UUID, rest get ints."""
+        result = _substitute_params(
+            "/orders/{order_id}/items/{item_id}", "abc-uuid"
+        )
+        assert result == "/orders/abc-uuid/items/1"
 
 
 # ── Unit tests: EndpointNode ───────────────────────────────────────────
@@ -162,6 +198,34 @@ class TestStateMachineAgent:
         assert len(broken) == 0
 
     @pytest.mark.asyncio
+    async def test_broken_flow_idempotent_delete_not_flagged(self):
+        """DELETE returning 200 but GET returning 404 is idempotent, not broken flow."""
+        call_count = [0]
+
+        async def _side_effect(method, path, payload=None, headers=None):
+            call_count[0] += 1
+            if method == "DELETE":
+                return {"status_code": 200, "body": "{}", "elapsed_ms": 10}
+            if method == "GET":
+                # Verification GET returns 404 → resource doesn't exist
+                return {"status_code": 404, "body": "{}", "elapsed_ms": 10}
+            # POST for skip-middle-steps strategy
+            return {"status_code": 201, "body": json.dumps({"id": "1"}), "elapsed_ms": 10}
+
+        executor = AsyncMock()
+        executor.execute_attack.side_effect = _side_effect
+        agent = StateMachineAgent(
+            base_url="http://localhost",
+            executor=executor,
+        )
+        findings = await agent.analyse(CRUD_ENDPOINTS)
+        broken = [f for f in findings if f["type"] == "broken_flow"]
+        # The "high" severity broken_flow for the direct DELETE call
+        # should be suppressed because GET returned 404 (idempotent).
+        high_broken = [f for f in broken if f["severity"] == "high"]
+        assert len(high_broken) == 0
+
+    @pytest.mark.asyncio
     async def test_out_of_order_detected(self):
         """Reverse-order call succeeding should be flagged."""
         executor = _mock_executor(status_code=200)
@@ -187,6 +251,35 @@ class TestStateMachineAgent:
         idor = [f for f in findings if f["type"] == "idor"]
         assert len(idor) >= 1
         assert idor[0]["severity"] == "critical"
+
+    @pytest.mark.asyncio
+    async def test_idor_uses_correct_token(self):
+        """Verify User B's token is actually sent in the IDOR read request."""
+        calls = []
+
+        async def _capture(method, path, payload=None, headers=None):
+            calls.append({"method": method, "path": path, "headers": headers})
+            if method == "POST":
+                return {"status_code": 201, "body": json.dumps({"id": "42"}), "elapsed_ms": 10}
+            return {"status_code": 200, "body": "{}", "elapsed_ms": 10}
+
+        executor = AsyncMock()
+        executor.execute_attack.side_effect = _capture
+
+        agent = StateMachineAgent(
+            base_url="http://localhost",
+            executor=executor,
+            auth_token_b="user_b_token",
+        )
+        await agent.analyse(CRUD_ENDPOINTS)
+
+        # Find the GET call that used custom headers (the IDOR read)
+        get_calls_with_headers = [
+            c for c in calls
+            if c["method"] == "GET" and c["headers"] is not None
+        ]
+        assert len(get_calls_with_headers) >= 1
+        assert get_calls_with_headers[0]["headers"]["Authorization"] == "Bearer user_b_token"
 
     @pytest.mark.asyncio
     async def test_idor_skipped_without_token_b(self):
@@ -254,3 +347,13 @@ class TestEdgeCases:
     def test_extract_id_with_order_id(self):
         body = json.dumps({"order_id": "ORD-001"})
         assert StateMachineAgent._extract_id({"body": body}) == "ORD-001"
+
+    def test_extract_id_camel_case(self):
+        """itemId, productId etc. should be detected by the regex."""
+        body = json.dumps({"itemId": "ITEM-99"})
+        assert StateMachineAgent._extract_id({"body": body}) == "ITEM-99"
+
+    def test_extract_id_snake_case_custom(self):
+        """product_id, shipment_id etc. should be detected."""
+        body = json.dumps({"shipment_id": "SHIP-001"})
+        assert StateMachineAgent._extract_id({"body": body}) == "SHIP-001"
