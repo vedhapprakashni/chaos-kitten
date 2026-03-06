@@ -358,8 +358,16 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
             for f in all_findings:
                 if isinstance(f, dict):
                     normalised.append(f)
+                elif hasattr(f, "to_dict"):
+                    # Prefer explicit serialisation (e.g. StateFinding, Finding)
+                    normalised.append(f.to_dict())
                 elif hasattr(f, "__dict__"):
-                    d = {k: v for k, v in f.__dict__.items() if not k.startswith("_")}
+                    d = {}
+                    for k, v in f.__dict__.items():
+                        if k.startswith("_"):
+                            continue
+                        # Handle Enum values (e.g. Severity.HIGH → "high")
+                        d[k] = v.value if hasattr(v, "value") else v
                     normalised.append(d)
 
             poc_paths = poc_gen.generate_batch(normalised)
