@@ -58,6 +58,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+pdf = ["weasyprint>=61.0.0"]
 mfa = [
     "pyotp>=2.9.0",
 ]

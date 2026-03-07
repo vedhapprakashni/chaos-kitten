@@ -22,6 +22,8 @@ except (ImportError, TypeError):
     START = None
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -164,6 +166,37 @@ async def plan_attacks(state: AgentState, app_config: Dict[str, Any]) -> Dict[st
                         "requestBody": details.get("requestBody"),
                     })
 
+        # ── Dynamic API Discovery (Spidering) ──────────────────
+        spider_cfg = app_config.get("spider", {})
+        if spider_cfg.get("enabled", False):
+            try:
+                from chaos_kitten.brain.spider import Spider
+
+                target_url = app_config.get("target", {}).get("base_url", "")
+                spider = Spider(
+                    base_url=target_url,
+                    max_depth=spider_cfg.get("max_depth", 3),
+                    max_pages=spider_cfg.get("max_pages", 100),
+                    concurrency=spider_cfg.get("concurrency", 5),
+                    timeout=spider_cfg.get("timeout", 10.0),
+                )
+                console.print("[bold cyan]🕷️  Spidering target for hidden endpoints...[/bold cyan]")
+                spider_results = await spider.crawl()
+                spidered = spider.to_endpoint_dicts()
+
+                # Merge: only add paths not already covered by the spec
+                existing_paths = {ep["path"] for ep in endpoints}
+                new_endpoints = [ep for ep in spidered if ep["path"] not in existing_paths]
+                endpoints.extend(new_endpoints)
+
+                if new_endpoints:
+                    console.print(
+                        f"[green]🕷️  Spider discovered {len(new_endpoints)} new endpoint(s) "
+                        f"(visited {spider_results['pages_visited']} pages)[/green]"
+                    )
+            except Exception as spider_err:
+                logger.warning("Spider phase failed: %s", spider_err)
+
         if not endpoints:
             console.print("[yellow]⚠️ No endpoints found to plan attacks against.[/yellow]")
             return {"planned_attacks": []}
@@ -175,6 +208,51 @@ async def plan_attacks(state: AgentState, app_config: Dict[str, Any]) -> Dict[st
     except Exception as e:
         logger.error(f"Failed to plan attacks: {e}")
         return {"planned_attacks": []}
+
+
+def _interactive_prompt(attack: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Prompt user for confirmation/modification of an attack."""
+    payload = attack.get("body") if attack.get("body") is not None else attack.get("payload")
+    payload_str = json.dumps(payload, indent=2) if payload is not None else "None"
+    
+    console.print(Panel(
+        f"[bold]Name:[/bold] {attack.get('name', 'Unnamed Attack')}\n"
+        f"[bold]Type:[/bold] {attack.get('type')}\n"
+        f"[bold]Method:[/bold] {attack.get('method')}\n"
+        f"[bold]Path:[/bold] {attack.get('path')}\n"
+        f"[bold]Payload:[/bold]\n{payload_str}",
+        title="[yellow]🛑 Execution Paused (Interactive Mode)[/yellow]",
+        border_style="yellow"
+    ))
+    
+    action = Prompt.ask(
+        "Action ([green]y[/green]es/[red]n[/red]o/[blue]m[/blue]odify)",
+        choices=["y", "n", "m"],
+        default="y"
+    )
+    
+    if action == "n":
+        console.print("[dim]Skipping attack...[/dim]")
+        return None
+        
+    if action == "m":
+        # Modify logic
+        console.print("[cyan]Enter new payload (JSON format):[/cyan]")
+        new_payload_str = Prompt.ask("", default=json.dumps(payload) if payload is not None else "{}")
+        try:
+            new_payload = json.loads(new_payload_str)
+            attack_copy = attack.copy()
+            if attack_copy.get("body") is not None:
+                attack_copy["body"] = new_payload
+            else:
+                attack_copy["payload"] = new_payload
+            console.print("[green]Payload updated![/green]")
+            return attack_copy
+        except json.JSONDecodeError:
+            console.print("[red]Invalid JSON! Proceeding with original payload.[/red]")
+            return attack
+            
+    return attack
 
 
 async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -200,6 +278,12 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
 
     for attack in planned_attacks:
         try:
+            # Interactive Mode
+            if app_config.get("execution", {}).get("interactive", False):
+                attack = _interactive_prompt(attack)
+                if attack is None:
+                    continue
+
             # Check for concurrency attack
             if attack.get("concurrency"):
                 concurrency_opts = attack.get("concurrency", {})
@@ -209,15 +293,16 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
                     count = 5
                 console.print(f"[bold cyan]⚡ Launching concurrent attack ({count} requests) on {attack.get('path')}...[/bold cyan]")
                 
-                base_payload = {
-                    "method": attack.get("method", "GET"),
-                    "url": f"{base_url}{attack.get('path', '/')}",
-                    "headers": attack.get("headers", {}),
-                    "body": attack.get("body") or attack.get("payload"),
-                }
-                
                 # Execute requests concurrently
-                tasks = [executor.execute(base_payload) for _ in range(count)]
+                tasks = [
+                    executor.execute_attack(
+                        method=attack.get("method", "GET"),
+                        path=attack.get("path", "/"),
+                        payload=attack.get("body") if attack.get("body") is not None else attack.get("payload"),
+                        headers=attack.get("headers", {})
+                    )
+                    for _ in range(count)
+                ]
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 
                 # Custom analysis for race conditions
@@ -248,13 +333,19 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
                 
                 step_results = []
                 for step in workflow_steps:
-                    step_payload = {
-                        "method": step.get("method", "GET"),
-                        "url": f"{base_url}{step.get('path', '/')}",
-                        "headers": step.get("headers", {}) or attack.get("headers", {}), # Inherit headers
-                        "body": step.get("body") or step.get("payload"),
-                    }
-                    response = await executor.execute(step_payload)
+                    # Interactive Mode for Steps
+                    if app_config.get("execution", {}).get("interactive", False):
+                        step = _interactive_prompt(step)
+                        if step is None:
+                            console.print("[yellow]Workflow step skipped by user.[/yellow]")
+                            continue
+
+                    response = await executor.execute_attack(
+                        method=step.get("method", "GET"),
+                        path=step.get("path", "/"),
+                        payload=step.get("body") if step.get("body") is not None else step.get("payload"),
+                        headers=step.get("headers", {}) or attack.get("headers", {}),
+                    )
                     step_results.append(response)
                     
                     if not (200 <= response.get("status_code", 500) < 300):
@@ -341,6 +432,43 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
     console.print(
         f"[green]Executed {len(all_results)} attacks, found {len(all_findings)} potential vulnerabilities.[/green]"
     )
+
+    # ── PoC Generation Phase ─────────────────────────────────
+    if all_findings:
+        try:
+            from chaos_kitten.brain.poc_generator import PoCGenerator
+
+            poc_gen = PoCGenerator(
+                base_url=base_url,
+                output_dir=app_config.get("reporting", {}).get("poc_dir", "pocs"),
+                llm_provider=app_config.get("agent", {}).get("llm_provider", "anthropic"),
+            )
+
+            # Normalise findings to dicts for the generator
+            normalised = []
+            for f in all_findings:
+                if isinstance(f, dict):
+                    normalised.append(f)
+                elif hasattr(f, "to_dict"):
+                    # Prefer explicit serialisation (e.g. StateFinding, Finding)
+                    normalised.append(f.to_dict())
+                elif hasattr(f, "__dict__"):
+                    d = {}
+                    for k, v in f.__dict__.items():
+                        if k.startswith("_"):
+                            continue
+                        # Handle Enum values (e.g. Severity.HIGH → "high")
+                        d[k] = v.value if hasattr(v, "value") else v
+                    normalised.append(d)
+
+            poc_paths = poc_gen.generate_batch(normalised)
+            if poc_paths:
+                console.print(
+                    f"[bold magenta]📝 Generated {len(poc_paths)} PoC script(s) in '{poc_gen.output_dir}'[/bold magenta]"
+                )
+        except Exception as e:
+            logger.warning("PoC generation phase failed: %s", e)
+
     return {"results": all_results, "findings": all_findings}
 
 
@@ -460,6 +588,45 @@ class Orchestrator:
                     existing_findings = list(final_state.get("findings", []))
                     existing_findings.extend(chaos_findings)
                     final_state["findings"] = existing_findings
+
+                # ── State Machine Testing Phase ──────────────────
+                state_cfg = self.config.get("state_machine", {})
+                if state_cfg.get("enabled", False):
+                    try:
+                        from chaos_kitten.brain.state_machine import StateMachineAgent
+
+                        console.print("[bold blue]🔗 Running State Machine Tests...[/bold blue]")
+
+                        # Build endpoint list from spec
+                        sm_endpoints = []
+                        spec = final_state.get("openapi_spec") or {}
+                        for path, methods in spec.get("paths", {}).items():
+                            for method, details in methods.items():
+                                if method.upper() in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                                    sm_endpoints.append({
+                                        "method": method.upper(),
+                                        "path": path,
+                                        "parameters": details.get("parameters", []),
+                                        "requestBody": details.get("requestBody"),
+                                    })
+
+                        agent = StateMachineAgent(
+                            base_url=target_cfg.get("base_url", ""),
+                            executor=executor,
+                            auth_token_b=state_cfg.get("auth_token_b"),
+                        )
+                        sm_findings = await agent.analyse(sm_endpoints)
+
+                        if sm_findings:
+                            existing = list(final_state.get("findings", []))
+                            existing.extend(sm_findings)
+                            final_state["findings"] = existing
+                            console.print(
+                                f"[red]🔗 State Machine found {len(sm_findings)} "
+                                f"business-logic issue(s).[/red]"
+                            )
+                    except Exception as sm_err:
+                        logger.warning("State machine tests failed: %s", sm_err)
 
                 # Save checkpoint (implied success if we got here)
                 save_checkpoint(CheckpointData(

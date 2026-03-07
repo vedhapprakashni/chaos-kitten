@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Optional, Union
 
 @dataclass
 class EndpointChange:
-    """Represents a change to an endpoint."""
+    """Represents a change to a specific API endpoint."""
 
-    change_type: str  # 'added', 'removed', 'modified'
+    change_type: str  # "added", "removed", "modified"
     method: str
     path: str
     old_endpoint: Optional[Dict[str, Any]] = None
