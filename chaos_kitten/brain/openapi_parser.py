@@ -355,8 +355,8 @@ class OpenAPIParser:
                 for scheme in schemes:
                     servers.append(f"{scheme}://{host}{base_path}")
             else:
-                # If host is missing, fallback to basePath or '/'
-                servers.append(base_path if base_path else '/')
+                # If host is missing, raise error (no silent fallback to localhost/relative)
+                raise ValueError("Swagger 2.0 spec missing 'host' field; provide an explicit target URL.")
         
         return servers
 
