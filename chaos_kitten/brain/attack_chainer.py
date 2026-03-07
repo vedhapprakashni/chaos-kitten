@@ -242,7 +242,7 @@ class ChainExecutor:
             
         return {
             "chain": chain,
-            "successful": results,
+            "results": results,
             "failed": errors,
             "partial_success": len(results) > 0 and len(errors) > 0
         }
