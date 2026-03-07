@@ -182,9 +182,12 @@ async def plan_attacks(state: AgentState, app_config: Dict[str, Any]) -> Dict[st
                 spider_results = await spider.crawl()
                 spidered = spider.to_endpoint_dicts()
 
-                # Merge: only add paths not already covered by the spec
-                existing_paths = {ep["path"] for ep in endpoints}
-                new_endpoints = [ep for ep in spidered if ep["path"] not in existing_paths]
+                # Merge: only add (method, path) combinations not already covered by the spec
+                existing_endpoints = {(ep["method"], ep["path"]) for ep in endpoints}
+                new_endpoints = [
+                    ep for ep in spidered 
+                    if (ep["method"], ep["path"]) not in existing_endpoints
+                ]
                 endpoints.extend(new_endpoints)
 
                 if new_endpoints:
