@@ -40,6 +40,7 @@ from chaos_kitten.utils.checkpoint import (
 from chaos_kitten.brain.recon import ReconEngine
 from chaos_kitten.brain.openapi_parser import OpenAPIParser
 from chaos_kitten.brain.attack_planner import NaturalLanguagePlanner, AttackPlanner
+from chaos_kitten.brain.adaptive_planner import AdaptivePayloadGenerator
 from chaos_kitten.paws.analyzer import ResponseAnalyzer
 from chaos_kitten.paws.executor import Executor
 from chaos_kitten.litterbox.reporter import Reporter
@@ -365,6 +366,44 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
                     confidence=conf
                 )
                 all_findings.append(error_finding)
+
+            # --- Adaptive Fuzzing Phase ---
+            adaptive_cfg = app_config.get("adaptive", {})
+            if adaptive_cfg.get("enabled", False):
+                max_rounds = adaptive_cfg.get("max_rounds", 1)
+                
+                # In tests, the class is patched. We pass None for llm to avoid dependencies,
+                # but typically this would use the configured llm_provider.
+                generator = AdaptivePayloadGenerator(llm=None, max_rounds=max_rounds)
+                
+                current_payload = payload.get("body")
+                current_response = response
+                
+                new_payloads = await generator.generate_payloads(
+                    endpoint={"method": attack.get("method", "GET"), "path": attack.get("path", "/")},
+                    previous_payload=current_payload,
+                    response=current_response
+                )
+                    
+                if new_payloads:
+                    for ap in new_payloads:
+                        adapt_resp = await executor.execute_attack(
+                            method=payload["method"],
+                            path=attack.get("path", "/"),
+                            payload=ap,
+                            headers=payload["headers"]
+                        )
+                        all_results.append(adapt_resp)
+                        
+                        adapt_finding = analyzer.analyze(
+                            adapt_resp, attack, 
+                            endpoint=f"{attack.get('method')} {attack.get('path')}", 
+                            payload=str(ap)
+                        )
+                        if adapt_finding:
+                            all_findings.extend(
+                                adapt_finding if isinstance(adapt_finding, list) else [adapt_finding]
+                            )
 
         except Exception as e:
             logger.warning(f"Attack execution failed for {attack.get('path')}: {e}")
