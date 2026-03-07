@@ -432,6 +432,8 @@ class Executor:
                  # Reconstruct query string
                  # parse_qs checks returns lists. urlencode handles it.
                  new_query = urllib.parse.urlencode(qs, doseq=True)
+                 # Revert encoding for the redaction marker to keep logs readable
+                 new_query = new_query.replace("%5BREDACTED%5D", "[REDACTED]")
                  full_url = urllib.parse.urlunparse(parsed._replace(query=new_query))
         except Exception:
              pass # Fail safe
