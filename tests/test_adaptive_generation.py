@@ -93,8 +93,8 @@ async def test_orchestrator_adaptive_integration():
              
              result = await execute_and_analyze(state, executor, config)
 
-             assert executor.execute_attack.call_count == 3
-             assert mock_gen_instance.generate_payloads.call_count == 1
+             assert executor.execute_attack.call_count == 5
+             assert mock_gen_instance.generate_payloads.call_count == 2
 
 @pytest.mark.asyncio
 async def test_orchestrator_adaptive_max_rounds():

@@ -372,20 +372,48 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
             if adaptive_cfg.get("enabled", False):
                 max_rounds = adaptive_cfg.get("max_rounds", 1)
                 
-                # In tests, the class is patched. We pass None for llm to avoid dependencies,
-                # but typically this would use the configured llm_provider.
-                generator = AdaptivePayloadGenerator(llm=None, max_rounds=max_rounds)
+                agent_config = app_config.get("agent", {})
+                provider = agent_config.get("llm_provider", "anthropic").lower()
+                temperature = agent_config.get("temperature", 0.7)
                 
-                current_payload = payload.get("body")
+                default_models = {
+                    "openai": "gpt-4o",
+                    "anthropic": "claude-3-5-sonnet-20241022",
+                    "ollama": "llama3",
+                }
+                model = agent_config.get("model", default_models.get(provider, "claude-3-5-sonnet-20241022"))
+                
+                llm = None
+                try:
+                    if provider == "anthropic":
+                        from langchain_anthropic import ChatAnthropic
+                        llm = ChatAnthropic(model=model, temperature=temperature)
+                    elif provider == "openai":
+                        from langchain_openai import ChatOpenAI
+                        llm = ChatOpenAI(model=model, temperature=temperature)
+                    elif provider == "ollama":
+                        from langchain_ollama import ChatOllama
+                        llm = ChatOllama(model=model, temperature=temperature)
+                except Exception as e:
+                    logger.warning(f"Failed to initialize LLM for adaptive fuzzing: {e}")
+                
+                generator = AdaptivePayloadGenerator(llm=llm, max_rounds=max_rounds)
+                
+                current_payload = str(payload.get("body")) if payload.get("body") else ""
                 current_response = response
                 
-                new_payloads = await generator.generate_payloads(
-                    endpoint={"method": attack.get("method", "GET"), "path": attack.get("path", "/")},
-                    previous_payload=current_payload,
-                    response=current_response
-                )
+                for _ in range(max_rounds):
+                    new_payloads = await generator.generate_payloads(
+                        endpoint={"method": attack.get("method", "GET"), "path": attack.get("path", "/")},
+                        previous_payload=current_payload,
+                        response=current_response
+                    )
                     
-                if new_payloads:
+                    if not new_payloads:
+                        break
+                        
+                    last_response = None
+                    last_payload = None
                     for ap in new_payloads:
                         adapt_resp = await executor.execute_attack(
                             method=payload["method"],
@@ -394,6 +422,8 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
                             headers=payload["headers"]
                         )
                         all_results.append(adapt_resp)
+                        last_response = adapt_resp
+                        last_payload = ap
                         
                         adapt_finding = analyzer.analyze(
                             adapt_resp, attack, 
@@ -404,6 +434,10 @@ async def execute_and_analyze(state: AgentState, executor: Any, app_config: Dict
                             all_findings.extend(
                                 adapt_finding if isinstance(adapt_finding, list) else [adapt_finding]
                             )
+                            
+                    if last_response:
+                        current_response = last_response
+                        current_payload = last_payload
 
         except Exception as e:
             logger.warning(f"Attack execution failed for {attack.get('path')}: {e}")
