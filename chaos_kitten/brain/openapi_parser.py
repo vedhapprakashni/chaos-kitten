@@ -37,9 +37,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 try:
     from prance import ResolvingParser
 except (ImportError, ModuleNotFoundError) as e:
-    # Check if 'prance' is shadowed by a file or directory
-    import prance
-    if not hasattr(prance, '__path__'):
+    # Check if 'prance' is shadowed by a local file or directory
+    import os
+    if os.path.exists("prance.py") or os.path.isdir("prance"):
         raise ImportError(
             "The 'prance' package is being shadowed by a local file or directory named 'prance.py' or 'prance/'. "
             "Please remove or rename them to allow the library to be imported correctly."

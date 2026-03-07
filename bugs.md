@@ -1,4 +1,4 @@
- Chaos Kitten — 5 Bugs to Contribute
+# Chaos Kitten — 5 Bugs to Contribute
 
  Bug 1 — `NameError` in `scan` CORS Probe: `target_url` Is Undefined  
 Difficulty: Medium  

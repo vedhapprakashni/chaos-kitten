@@ -1,4 +1,4 @@
- [FEATURE] Multi-Step State Machine Agent for Business Logic Testing
+# [FEATURE] Multi-Step State Machine Agent for Business Logic Testing
 
  Description
 This PR implements a Multi-Step State Machine Agent that detects business-logic vulnerabilities by mapping API endpoint dependencies, building state chains, and attempting to disrupt expected workflows.
