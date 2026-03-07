@@ -33,7 +33,18 @@ Examples:
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
-from prance import ResolvingParser
+
+try:
+    from prance import ResolvingParser
+except (ImportError, ModuleNotFoundError) as e:
+    # Check if 'prance' is shadowed by a file or directory
+    import prance
+    if not hasattr(prance, '__path__'):
+        raise ImportError(
+            "The 'prance' package is being shadowed by a local file or directory named 'prance.py' or 'prance/'. "
+            "Please remove or rename them to allow the library to be imported correctly."
+        ) from e
+    raise
 
 logger = logging.getLogger(__name__)
 
